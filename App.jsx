@@ -598,6 +598,8 @@ function QuotesScreen({ orders, convertToPedido, setScreen }) {
 }
 
 function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing }) {
+  const [presetRepStoreId, setPresetRepStoreId] = useState('');
+  const goToRepresentante = (storeId) => { setPresetRepStoreId(storeId); setAdminTab('representantes'); };
   return (
     <div className="screen">
       <header className="topbar">
@@ -618,9 +620,9 @@ function AdminScreen({ stores, vendors, representantes, products, orders, update
       </div>
       <div className="admin-body">
         {adminTab === 'produtos' && <ProductsAdmin products={products} updateProducts={updateProducts} />}
-        {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
+        {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} goToRepresentante={goToRepresentante} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
-        {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
+        {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} presetStoreId={presetRepStoreId} />}
         {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} />}
         {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} />}
@@ -718,8 +720,8 @@ function ProductsAdmin({ products, updateProducts }) {
   );
 }
 
-function StoresAdmin({ stores, updateStores, vendors, representantes }) {
-  const empty = { id: null, name: '', commissionPercent: '' };
+function StoresAdmin({ stores, updateStores, vendors, representantes, goToRepresentante }) {
+  const empty = { id: null, name: '', commissionPercent: '', atendidaPorRepresentante: false };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const save = () => {
@@ -728,7 +730,7 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
     else updateStores(current => [...current, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
     setForm(empty); setEditingId(null);
   };
-  const edit = (s) => { setForm({ ...s, commissionPercent: String(s.commissionPercent) }); setEditingId(s.id); };
+  const edit = (s) => { setForm({ ...empty, ...s, commissionPercent: String(s.commissionPercent) }); setEditingId(s.id); };
   const remove = (id) => updateStores(current => current.filter(s => s.id !== id));
   return (
     <div>
@@ -739,11 +741,18 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
         <label>Comissão da loja (%)
           <input type="number" step="0.1" value={form.commissionPercent} onChange={e => setForm({ ...form, commissionPercent: e.target.value })} placeholder="Ex: 3" />
         </label>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={form.atendidaPorRepresentante} onChange={e => setForm({ ...form, atendidaPorRepresentante: e.target.checked })} />
+          Esta loja é atendida por um representante (em vez de vendedor próprio)
+        </label>
         <div className="admin-form-actions">
           <button className="btn-primary" onClick={save}>{editingId ? 'Salvar alterações' : 'Adicionar loja'}</button>
           {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
         </div>
-        <p className="hint">Depois de criar a loja, cadastre o(s) vendedor(es) dela na aba "Vendedores" ou, se for atendida por um representante externo, cadastre na aba "Representantes".</p>
+        {form.atendidaPorRepresentante && editingId && (
+          <button type="button" className="btn-secondary" onClick={() => goToRepresentante(editingId)}><UserCog size={16} /> Cadastrar/editar dados do representante desta loja</button>
+        )}
+        <p className="hint">Depois de criar a loja, cadastre o(s) vendedor(es) dela na aba "Vendedores" ou, se for atendida por um representante externo, marque a caixinha acima e cadastre os dados completos na aba "Representantes".</p>
       </div>
       <div className="admin-list">
         {stores.map(s => {
@@ -752,8 +761,8 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
           return (
             <div key={s.id} className="admin-list-item">
               <div className="admin-list-info">
-                <div>{s.name}</div>
-                <div className="muted">Comissão: {s.commissionPercent}% · {vCount} vendedor(es){rep ? ` · Representante: ${rep.name} (${rep.commissionPercent}%)` : ''}</div>
+                <div>{s.name}{s.atendidaPorRepresentante && <span className="status-badge status-orcamento" style={{ marginLeft: 6 }}>Representante</span>}</div>
+                <div className="muted">Comissão: {s.commissionPercent}% · {vCount} vendedor(es){rep ? ` · Representante: ${rep.name} (${rep.commissionPercent}%)` : (s.atendidaPorRepresentante ? ' · Representante ainda não cadastrado' : '')}</div>
               </div>
               <button className="icon-btn" onClick={() => edit(s)}>✎</button>
               <button className="icon-btn" onClick={() => remove(s.id)}><Trash2 size={16} /></button>
@@ -815,17 +824,22 @@ function VendorsAdmin({ vendors, stores, updateVendors }) {
   );
 }
 
-function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
-  const empty = { id: null, name: '', storeId: '', commissionPercent: '' };
+function RepresentantesAdmin({ representantes, stores, updateRepresentantes, presetStoreId }) {
+  const empty = { id: null, name: '', documento: '', telefone: '', endereco: '', storeId: '', commissionPercent: '', banco: '', agencia: '', conta: '', tipoConta: '', pix: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
+
+  useEffect(() => {
+    if (presetStoreId && !editingId) setForm(f => ({ ...f, storeId: presetStoreId }));
+  }, [presetStoreId]);
+
   const save = () => {
     if (!form.name.trim() || !form.storeId) return;
     if (editingId) updateRepresentantes(current => current.map(r => r.id === editingId ? { ...form, id: editingId, commissionPercent: Number(form.commissionPercent) || 0 } : r));
     else updateRepresentantes(current => [...current, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
     setForm(empty); setEditingId(null);
   };
-  const edit = (r) => { setForm({ ...r, commissionPercent: String(r.commissionPercent) }); setEditingId(r.id); };
+  const edit = (r) => { setForm({ ...empty, ...r, commissionPercent: String(r.commissionPercent) }); setEditingId(r.id); };
   const remove = (id) => updateRepresentantes(current => current.filter(r => r.id !== id));
   return (
     <div>
@@ -833,6 +847,15 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
         <p className="hint">Use esta área para lojas atendidas por um representante externo (comum em lojas de fora do estado), em vez de um vendedor próprio dentro do app.</p>
         <label>Nome do representante
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Carlos Mendes" />
+        </label>
+        <label>CPF ou CNPJ
+          <input value={form.documento} onChange={e => setForm({ ...form, documento: e.target.value })} placeholder="000.000.000-00 ou 00.000.000/0000-00" />
+        </label>
+        <label>Telefone
+          <input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} placeholder="(00) 00000-0000" />
+        </label>
+        <label>Endereço
+          <input value={form.endereco} onChange={e => setForm({ ...form, endereco: e.target.value })} placeholder="Rua, número, cidade, estado" />
         </label>
         <label>Loja representada
           <select value={form.storeId} onChange={e => setForm({ ...form, storeId: e.target.value })}>
@@ -843,6 +866,28 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
         <label>Comissão sobre o faturamento da loja (%)
           <input type="number" step="0.1" value={form.commissionPercent} onChange={e => setForm({ ...form, commissionPercent: e.target.value })} placeholder="Ex: 4" />
         </label>
+        <div className="form-subsection">Dados bancários</div>
+        <label>Banco
+          <input value={form.banco} onChange={e => setForm({ ...form, banco: e.target.value })} placeholder="Ex: Banco do Brasil" />
+        </label>
+        <div className="admin-form-actions" style={{ gap: 12 }}>
+          <label style={{ flex: 1 }}>Agência
+            <input value={form.agencia} onChange={e => setForm({ ...form, agencia: e.target.value })} placeholder="Ex: 1234" />
+          </label>
+          <label style={{ flex: 1 }}>Conta
+            <input value={form.conta} onChange={e => setForm({ ...form, conta: e.target.value })} placeholder="Ex: 12345-6" />
+          </label>
+        </div>
+        <label>Tipo de conta
+          <select value={form.tipoConta} onChange={e => setForm({ ...form, tipoConta: e.target.value })}>
+            <option value="">Selecione</option>
+            <option value="Corrente">Corrente</option>
+            <option value="Poupança">Poupança</option>
+          </select>
+        </label>
+        <label>Chave PIX
+          <input value={form.pix} onChange={e => setForm({ ...form, pix: e.target.value })} placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória" />
+        </label>
         <div className="admin-form-actions">
           <button className="btn-primary" onClick={save}>{editingId ? 'Salvar alterações' : 'Adicionar representante'}</button>
           {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
@@ -851,7 +896,12 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
       <div className="admin-list">
         {representantes.map(r => (
           <div key={r.id} className="admin-list-item">
-            <div className="admin-list-info"><div>{r.name}</div><div className="muted">{stores.find(s => s.id === r.storeId)?.name || '—'} · Comissão {r.commissionPercent}% do faturamento</div></div>
+            <div className="admin-list-info">
+              <div>{r.name}</div>
+              <div className="muted">{stores.find(s => s.id === r.storeId)?.name || '—'} · Comissão {r.commissionPercent}% do faturamento</div>
+              <div className="muted">{r.documento || '—'} · {r.telefone || '—'}</div>
+              {(r.banco || r.pix) && <div className="muted">{r.banco ? `${r.banco} · Ag ${r.agencia || '—'} · Conta ${r.conta || '—'} (${r.tipoConta || '—'})` : ''} {r.pix ? `· PIX: ${r.pix}` : ''}</div>}
+            </div>
             <button className="icon-btn" onClick={() => edit(r)}>✎</button>
             <button className="icon-btn" onClick={() => remove(r.id)}><Trash2 size={16} /></button>
           </div>
@@ -883,10 +933,10 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
 
   const pedidos = filtered.filter(o => o.status === 'pedido');
   const orcamentosPendentes = filtered.filter(o => o.status === 'orcamento');
-  const totalVendas = pedidos.reduce((s, o) => s + o.total, 0);
-  const totalComissaoLoja = pedidos.reduce((s, o) => s + o.commissionStoreValue, 0);
-  const totalComissaoVendedor = pedidos.reduce((s, o) => s + o.commissionVendorValue, 0);
-  const totalOrcamentos = orcamentosPendentes.reduce((s, o) => s + o.total, 0);
+  const totalVendas = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalComissaoLoja = pedidos.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
+  const totalComissaoVendedor = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
+  const totalOrcamentos = orcamentosPendentes.reduce((s, o) => s + (Number(o.total) || 0), 0);
 
   const downloadReport = () => {
     if (!window.jspdf) return;
@@ -992,6 +1042,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
 function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
+  const [filterRepresentante, setFilterRepresentante] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
@@ -1012,9 +1063,9 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
   const porVendedor = vendorsToShow.map(v => {
     const os = filteredOrders.filter(o => o.vendorId === v.id);
     const pedidos = os.filter(o => o.status === 'pedido');
-    const orcamentosValue = os.reduce((s, o) => s + o.total, 0);
-    const pedidosValue = pedidos.reduce((s, o) => s + o.total, 0);
-    const comissao = pedidos.reduce((s, o) => s + o.commissionVendorValue, 0);
+    const orcamentosValue = os.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    const pedidosValue = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    const comissao = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
     const taxaConversao = os.length ? (pedidos.length / os.length) * 100 : 0;
     const storeName = stores.find(s => s.id === v.storeId)?.name || '—';
     return { id: v.id, name: v.name, storeName, orcCount: os.length, orcValue: orcamentosValue, pedCount: pedidos.length, pedValue: pedidosValue, taxaConversao, comissao };
@@ -1023,12 +1074,22 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
   const porLoja = storesToShow.map(s => {
     const os = filteredOrders.filter(o => o.storeId === s.id);
     const pedidos = os.filter(o => o.status === 'pedido');
-    const orcamentosValue = os.reduce((sum, o) => sum + o.total, 0);
-    const pedidosValue = pedidos.reduce((sum, o) => sum + o.total, 0);
-    const comissaoLoja = pedidos.reduce((sum, o) => sum + o.commissionStoreValue, 0);
+    const orcamentosValue = os.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const pedidosValue = pedidos.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const comissaoLoja = pedidos.reduce((sum, o) => sum + (Number(o.commissionStoreValue) || 0), 0);
     const rep = representantes.find(r => r.storeId === s.id);
-    const comissaoRepresentante = pedidos.reduce((sum, o) => sum + (o.commissionRepresentanteValue || 0), 0);
+    const comissaoRepresentante = pedidos.reduce((sum, o) => sum + (Number(o.commissionRepresentanteValue) || 0), 0);
     return { id: s.id, name: s.name, orcCount: os.length, orcValue: orcamentosValue, pedCount: pedidos.length, pedValue: pedidosValue, comissaoLoja, repName: rep?.name || null, comissaoRepresentante };
+  });
+
+  const representantesToShow = filterRepresentante ? representantes.filter(r => r.id === filterRepresentante) : (filterStore ? representantes.filter(r => r.storeId === filterStore) : representantes);
+  const porRepresentante = representantesToShow.map(r => {
+    const os = filteredOrders.filter(o => o.storeId === r.storeId);
+    const pedidos = os.filter(o => o.status === 'pedido');
+    const pedidosValue = pedidos.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const comissao = pedidos.reduce((sum, o) => sum + (Number(o.commissionRepresentanteValue) || 0), 0);
+    const storeName = stores.find(s => s.id === r.storeId)?.name || '—';
+    return { id: r.id, name: r.name, storeName, pedCount: pedidos.length, pedValue: pedidosValue, comissao };
   });
 
   const downloadReport = () => {
@@ -1077,6 +1138,21 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
       if (y > 265) { doc.addPage(); y = 20; }
     });
 
+    y += 8;
+    doc.setFontSize(12);
+    doc.text('Por representante', 14, y); y += 7;
+    doc.setFontSize(9);
+    doc.text('Representante', 14, y); doc.text('Loja', 70, y); doc.text('Pedidos', 120, y); doc.text('Comissão', 155, y);
+    y += 2; doc.line(14, y, 196, y); y += 6;
+    porRepresentante.forEach(r => {
+      doc.text(String(r.name).slice(0, 26), 14, y);
+      doc.text(String(r.storeName).slice(0, 20), 70, y);
+      doc.text(String(r.pedCount), 120, y);
+      doc.text(currency(r.comissao), 155, y);
+      y += 6;
+      if (y > 265) { doc.addPage(); y = 20; }
+    });
+
     doc.save('relatorio-desempenho.pdf');
   };
 
@@ -1093,6 +1169,12 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
           <select value={filterVendor} onChange={e => setFilterVendor(e.target.value)}>
             <option value="">Todos os vendedores</option>
             {vendorOptions.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </label>
+        <label>Representante
+          <select value={filterRepresentante} onChange={e => setFilterRepresentante(e.target.value)}>
+            <option value="">Todos os representantes</option>
+            {(filterStore ? representantes.filter(r => r.storeId === filterStore) : representantes).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
         </label>
         <div className="admin-form-actions" style={{ gap: 12 }}>
@@ -1146,6 +1228,24 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
           </tbody>
         </table>
         {porLoja.length === 0 && <p className="hint">Nenhuma loja encontrada para esse filtro.</p>}
+      </div>
+
+      <h3 className="report-heading">Por representante</h3>
+      <div className="report-table-wrap">
+        <table className="report-table">
+          <thead><tr><th>Representante</th><th>Loja</th><th>Pedidos</th><th>Comissão</th></tr></thead>
+          <tbody>
+            {porRepresentante.map(r => (
+              <tr key={r.id}>
+                <td>{r.name}</td>
+                <td>{r.storeName}</td>
+                <td>{r.pedCount} · {currency(r.pedValue)}</td>
+                <td>{currency(r.comissao)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {porRepresentante.length === 0 && <p className="hint">Nenhum representante encontrado para esse filtro.</p>}
       </div>
     </div>
   );
@@ -1271,6 +1371,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .admin-form-actions { display: flex; gap: 10px; }
 .checkbox-row { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
 .checkbox-row input { width: auto; }
+.form-subsection { font-size: 12px; font-weight: 600; color: var(--ink); border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; }
 .file-label { display: flex; align-items: center; gap: 8px; border: 1px dashed var(--line); background: var(--surface); color: var(--ink); padding: 10px 12px; border-radius: 3px; cursor: pointer; font-size: 13px; font-family: inherit; width: fit-content; }
 .preview-thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 3px; border: 1px solid var(--line); }
 .admin-list { display: flex; flex-direction: column; gap: 8px; }
