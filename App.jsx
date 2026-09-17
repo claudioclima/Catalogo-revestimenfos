@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw } from 'lucide-react';
 import { storage } from './storage';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -46,9 +46,12 @@ function packagingLine(item) {
   return parts.join(' · ');
 }
 
+const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', products: 'products', orders: 'orders', adminPin: 'adminPin' };
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [pdfLibReady, setPdfLibReady] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [stores, setStores] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [representantes, setRepresentantes] = useState([]);
@@ -72,6 +75,24 @@ export default function App() {
   const [lastOrder, setLastOrder] = useState(null);
   const [adminTab, setAdminTab] = useState('produtos');
 
+  const loadKey = async (key, fallback) => {
+    try {
+      const r = await storage.get(key);
+      return r ? JSON.parse(r.value) : fallback;
+    } catch { return fallback; }
+  };
+
+  const refreshAll = async () => {
+    setRefreshing(true);
+    const [s, v, rep, p, o, pin] = await Promise.all([
+      loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []),
+      loadKey(STORAGE_KEYS.products, []), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'),
+    ]);
+    setStores(s); setVendors(v); setRepresentantes(rep); setProducts(p); setOrders(o); setAdminPin(pin);
+    setRefreshing(false);
+    return { s, v, rep, p, o, pin };
+  };
+
   useEffect(() => {
     if (window.jspdf) { setPdfLibReady(true); return; }
     const script = document.createElement('script');
@@ -83,35 +104,39 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    (async () => {
-      const load = async (key, fallback) => {
-        try {
-          const r = await storage.get(key);
-          return r ? JSON.parse(r.value) : fallback;
-        } catch { return fallback; }
-      };
-      const [s, v, rep, p, o, pin] = await Promise.all([
-        load('stores', []), load('vendors', []), load('representantes', []), load('products', []), load('orders', []), load('adminPin', '1234'),
-      ]);
-      setStores(s); setVendors(v); setRepresentantes(rep); setProducts(p); setOrders(o); setAdminPin(pin);
-      setReady(true);
-    })();
+    (async () => { await refreshAll(); setReady(true); })();
   }, []);
 
-  const persist = async (key, value) => {
-    try { await storage.set(key, JSON.stringify(value)); } catch (e) { console.error(e); }
+  useEffect(() => {
+    if (ready && screen === 'admin') { refreshAll(); }
+  }, [screen]);
+
+  // Generic "fetch latest, apply change, persist" helper — avoids one device's stale
+  // local copy silently overwriting changes another device already saved.
+  const mutate = async (key, updater, setter) => {
+    let current;
+    try {
+      const r = await storage.get(key);
+      current = r ? JSON.parse(r.value) : [];
+    } catch { current = []; }
+    const next = updater(current);
+    setter(next);
+    try { await storage.set(key, JSON.stringify(next)); } catch (e) { console.error(e); }
+    return next;
   };
-  const updateStores = (list) => { setStores(list); persist('stores', list); };
-  const updateVendors = (list) => { setVendors(list); persist('vendors', list); };
-  const updateRepresentantes = (list) => { setRepresentantes(list); persist('representantes', list); };
-  const updateProducts = (list) => { setProducts(list); persist('products', list); };
-  const updateOrders = (list) => { setOrders(list); persist('orders', list); };
-  const updateAdminPin = (pin) => { setAdminPin(pin); persist('adminPin', pin); };
+
+  const mutateStores = (updater) => mutate(STORAGE_KEYS.stores, updater, setStores);
+  const mutateVendors = (updater) => mutate(STORAGE_KEYS.vendors, updater, setVendors);
+  const mutateRepresentantes = (updater) => mutate(STORAGE_KEYS.representantes, updater, setRepresentantes);
+  const mutateProducts = (updater) => mutate(STORAGE_KEYS.products, updater, setProducts);
+  const mutateOrders = (updater) => mutate(STORAGE_KEYS.orders, updater, setOrders);
+  const mutateAdminPin = (pin) => { setAdminPin(pin); storage.set(STORAGE_KEYS.adminPin, JSON.stringify(pin)).catch(() => {}); };
 
   const storeVendors = useMemo(() => vendors.filter(v => v.storeId === loginStoreId), [vendors, loginStoreId]);
 
-  const doVendorLogin = () => {
-    const vendor = vendors.find(v => v.id === loginVendorId);
+  const doVendorLogin = async () => {
+    const { v } = await refreshAll();
+    const vendor = v.find(x => x.id === loginVendorId);
     if (!vendor) { setLoginError('Selecione um vendedor.'); return; }
     if ((vendor.pin || '') !== loginPin) { setLoginError('PIN incorreto.'); return; }
     setCurrentVendor(vendor); setCart([]); setLoginError(''); setScreen('catalog');
@@ -152,7 +177,7 @@ export default function App() {
   const generalDiscountPercent = clampPercent(checkout.descontoGeral);
   const cartTotal = cartSubtotal * (1 - generalDiscountPercent / 100);
 
-  const salvarOrcamento = () => {
+  const salvarOrcamento = async () => {
     if (!checkout.nome.trim()) return;
     const store = stores.find(s => s.id === currentVendor.storeId);
     const representante = representantes.find(r => r.storeId === currentVendor.storeId);
@@ -181,15 +206,18 @@ export default function App() {
       status: 'orcamento',
       convertedAt: null,
     };
-    updateOrders([order, ...orders]);
+    await mutateOrders(current => [order, ...current]);
     setLastOrder(order); setCart([]); setCheckout({ nome: '', telefone: '', endereco: '', obs: '', descontoGeral: '' });
     setScreen('orderSummary');
   };
 
-  const convertToPedido = (orderId) => {
+  const convertToPedido = async (orderId) => {
     const now = new Date().toISOString();
-    updateOrders(orders.map(o => o.id === orderId ? { ...o, status: 'pedido', convertedAt: now } : o));
-    if (lastOrder && lastOrder.id === orderId) setLastOrder({ ...lastOrder, status: 'pedido', convertedAt: now });
+    const next = await mutateOrders(current => current.map(o => o.id === orderId ? { ...o, status: 'pedido', convertedAt: now } : o));
+    if (lastOrder && lastOrder.id === orderId) {
+      const updated = next.find(o => o.id === orderId);
+      if (updated) setLastOrder(updated);
+    }
   };
 
   const generatePDF = (order) => {
@@ -273,7 +301,7 @@ export default function App() {
         <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }} />
       )}
       {screen === 'catalog' && currentVendor && (
-        <CatalogScreen {...{ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, addToCart, cartCount, cartTotal, setScreen, logout }} />
+        <CatalogScreen {...{ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, addToCart, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }} />
       )}
       {screen === 'cart' && (
         <CartScreen {...{ cartDetailed, setQty, setItemDiscount, removeFromCart, cartSubtotal, setScreen }} />
@@ -288,7 +316,7 @@ export default function App() {
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen }} />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido }} />
+        <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing }} />
       )}
     </div>
   );
@@ -353,7 +381,7 @@ function productSpecsLine(p) {
   return parts.join(' · ');
 }
 
-function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, addToCart, cartCount, cartTotal, setScreen, logout }) {
+function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, addToCart, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }) {
   const store = stores.find(s => s.id === currentVendor.storeId);
   const categories = ['Todos', ...Array.from(new Set(products.map(p => p.category).filter(Boolean)))];
   const filtered = products.filter(p => p.active !== false)
@@ -365,6 +393,7 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
       <header className="topbar">
         <div><div className="topbar-title">{store?.name}</div><div className="topbar-sub">{currentVendor.name}</div></div>
         <div className="topbar-actions">
+          <button className="icon-btn" onClick={refreshAll} title="Atualizar catálogo" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
           <button className="icon-btn" onClick={() => setScreen('quotes')} title="Meus orçamentos"><FileText size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
           <button className="cart-btn" onClick={() => setScreen('cart')}>
@@ -568,12 +597,15 @@ function QuotesScreen({ orders, convertToPedido, setScreen }) {
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido }) {
+function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing }) {
   return (
     <div className="screen">
       <header className="topbar">
         <div className="topbar-title">Administração</div>
-        <button className="icon-btn" onClick={() => setScreen('login')}><LogOut size={18} /></button>
+        <div className="topbar-actions">
+          <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <button className="icon-btn" onClick={() => setScreen('login')}><LogOut size={18} /></button>
+        </div>
       </header>
       <div className="tabs wrap">
         <button className={adminTab === 'produtos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('produtos')}><Package size={14} /> Produtos</button>
@@ -590,7 +622,7 @@ function AdminScreen({ stores, vendors, representantes, products, orders, update
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
         {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} />}
-        {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} />}
+        {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} />}
       </div>
     </div>
@@ -620,12 +652,12 @@ function ProductsAdmin({ products, updateProducts }) {
   const save = () => {
     if (!form.name.trim() || !form.price) return;
     const payload = { ...form, price: Number(form.price), qtdCaixa: form.caixaNaoSeAplica ? '' : form.qtdCaixa };
-    if (editingId) updateProducts(products.map(p => p.id === editingId ? { ...payload, id: editingId } : p));
-    else updateProducts([...products, { ...payload, id: uid() }]);
+    if (editingId) updateProducts(current => current.map(p => p.id === editingId ? { ...payload, id: editingId } : p));
+    else updateProducts(current => [...current, { ...payload, id: uid() }]);
     setForm(empty); setEditingId(null);
   };
   const edit = (p) => { setForm({ ...empty, ...p, price: String(p.price) }); setEditingId(p.id); };
-  const remove = (id) => updateProducts(products.filter(p => p.id !== id));
+  const remove = (id) => updateProducts(current => current.filter(p => p.id !== id));
 
   return (
     <div>
@@ -692,12 +724,12 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
   const [editingId, setEditingId] = useState(null);
   const save = () => {
     if (!form.name.trim()) return;
-    if (editingId) updateStores(stores.map(s => s.id === editingId ? { ...form, id: editingId, commissionPercent: Number(form.commissionPercent) || 0 } : s));
-    else updateStores([...stores, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
+    if (editingId) updateStores(current => current.map(s => s.id === editingId ? { ...form, id: editingId, commissionPercent: Number(form.commissionPercent) || 0 } : s));
+    else updateStores(current => [...current, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
     setForm(empty); setEditingId(null);
   };
   const edit = (s) => { setForm({ ...s, commissionPercent: String(s.commissionPercent) }); setEditingId(s.id); };
-  const remove = (id) => updateStores(stores.filter(s => s.id !== id));
+  const remove = (id) => updateStores(current => current.filter(s => s.id !== id));
   return (
     <div>
       <div className="admin-form">
@@ -740,12 +772,12 @@ function VendorsAdmin({ vendors, stores, updateVendors }) {
   const [editingId, setEditingId] = useState(null);
   const save = () => {
     if (!form.name.trim() || !form.storeId || !form.pin) return;
-    if (editingId) updateVendors(vendors.map(v => v.id === editingId ? { ...form, id: editingId, commissionPercent: Number(form.commissionPercent) || 0 } : v));
-    else updateVendors([...vendors, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
+    if (editingId) updateVendors(current => current.map(v => v.id === editingId ? { ...form, id: editingId, commissionPercent: Number(form.commissionPercent) || 0 } : v));
+    else updateVendors(current => [...current, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
     setForm(empty); setEditingId(null);
   };
   const edit = (v) => { setForm({ ...v, commissionPercent: String(v.commissionPercent) }); setEditingId(v.id); };
-  const remove = (id) => updateVendors(vendors.filter(v => v.id !== id));
+  const remove = (id) => updateVendors(current => current.filter(v => v.id !== id));
   return (
     <div>
       <div className="admin-form">
@@ -789,12 +821,12 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
   const [editingId, setEditingId] = useState(null);
   const save = () => {
     if (!form.name.trim() || !form.storeId) return;
-    if (editingId) updateRepresentantes(representantes.map(r => r.id === editingId ? { ...form, id: editingId, commissionPercent: Number(form.commissionPercent) || 0 } : r));
-    else updateRepresentantes([...representantes, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
+    if (editingId) updateRepresentantes(current => current.map(r => r.id === editingId ? { ...form, id: editingId, commissionPercent: Number(form.commissionPercent) || 0 } : r));
+    else updateRepresentantes(current => [...current, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
     setForm(empty); setEditingId(null);
   };
   const edit = (r) => { setForm({ ...r, commissionPercent: String(r.commissionPercent) }); setEditingId(r.id); };
-  const remove = (id) => updateRepresentantes(representantes.filter(r => r.id !== id));
+  const remove = (id) => updateRepresentantes(current => current.filter(r => r.id !== id));
   return (
     <div>
       <div className="admin-form">
@@ -957,9 +989,28 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
   );
 }
 
-function RelatoriosAdmin({ orders, stores, vendors, representantes }) {
-  const porVendedor = vendors.map(v => {
-    const os = orders.filter(o => o.vendorId === v.id);
+function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady }) {
+  const [filterStore, setFilterStore] = useState('');
+  const [filterVendor, setFilterVendor] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const vendorOptions = filterStore ? vendors.filter(v => v.storeId === filterStore) : vendors;
+
+  const filteredOrders = orders.filter(o => {
+    if (filterStore && o.storeId !== filterStore) return false;
+    if (filterVendor && o.vendorId !== filterVendor) return false;
+    const d = o.createdAt.slice(0, 10);
+    if (dateFrom && d < dateFrom) return false;
+    if (dateTo && d > dateTo) return false;
+    return true;
+  });
+
+  const vendorsToShow = filterVendor ? vendors.filter(v => v.id === filterVendor) : vendorOptions;
+  const storesToShow = filterStore ? stores.filter(s => s.id === filterStore) : stores;
+
+  const porVendedor = vendorsToShow.map(v => {
+    const os = filteredOrders.filter(o => o.vendorId === v.id);
     const pedidos = os.filter(o => o.status === 'pedido');
     const orcamentosValue = os.reduce((s, o) => s + o.total, 0);
     const pedidosValue = pedidos.reduce((s, o) => s + o.total, 0);
@@ -969,8 +1020,8 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes }) {
     return { id: v.id, name: v.name, storeName, orcCount: os.length, orcValue: orcamentosValue, pedCount: pedidos.length, pedValue: pedidosValue, taxaConversao, comissao };
   });
 
-  const porLoja = stores.map(s => {
-    const os = orders.filter(o => o.storeId === s.id);
+  const porLoja = storesToShow.map(s => {
+    const os = filteredOrders.filter(o => o.storeId === s.id);
     const pedidos = os.filter(o => o.status === 'pedido');
     const orcamentosValue = os.reduce((sum, o) => sum + o.total, 0);
     const pedidosValue = pedidos.reduce((sum, o) => sum + o.total, 0);
@@ -980,8 +1031,83 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes }) {
     return { id: s.id, name: s.name, orcCount: os.length, orcValue: orcamentosValue, pedCount: pedidos.length, pedValue: pedidosValue, comissaoLoja, repName: rep?.name || null, comissaoRepresentante };
   });
 
+  const downloadReport = () => {
+    if (!window.jspdf) return;
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    let y = 20;
+    doc.setFontSize(15);
+    doc.text('Relatório de desempenho', 14, y); y += 8;
+    doc.setFontSize(9);
+    const storeName = filterStore ? (stores.find(s => s.id === filterStore)?.name || '') : 'Todas as lojas';
+    const vendorName = filterVendor ? (vendors.find(v => v.id === filterVendor)?.name || '') : 'Todos os vendedores';
+    doc.text(`Loja: ${storeName} · Vendedor: ${vendorName}`, 14, y); y += 5;
+    doc.text(`Período: ${dateFrom || 'início'} até ${dateTo || 'hoje'}`, 14, y); y += 10;
+
+    doc.setFontSize(12);
+    doc.text('Por vendedor', 14, y); y += 7;
+    doc.setFontSize(9);
+    doc.text('Vendedor', 14, y); doc.text('Loja', 60, y); doc.text('Orçam.', 100, y); doc.text('Pedidos', 125, y); doc.text('Conv.', 155, y); doc.text('Comissão', 172, y);
+    y += 2; doc.line(14, y, 196, y); y += 6;
+    porVendedor.forEach(v => {
+      doc.text(String(v.name).slice(0, 22), 14, y);
+      doc.text(String(v.storeName).slice(0, 16), 60, y);
+      doc.text(String(v.orcCount), 100, y);
+      doc.text(String(v.pedCount), 125, y);
+      doc.text(`${v.taxaConversao.toFixed(0)}%`, 155, y);
+      doc.text(currency(v.comissao), 172, y);
+      y += 6;
+      if (y > 265) { doc.addPage(); y = 20; }
+    });
+
+    y += 8;
+    doc.setFontSize(12);
+    doc.text('Por loja', 14, y); y += 7;
+    doc.setFontSize(9);
+    doc.text('Loja', 14, y); doc.text('Orçam.', 70, y); doc.text('Pedidos', 95, y); doc.text('C. loja', 125, y); doc.text('Representante', 150, y); doc.text('C. repr.', 178, y);
+    y += 2; doc.line(14, y, 196, y); y += 6;
+    porLoja.forEach(s => {
+      doc.text(String(s.name).slice(0, 26), 14, y);
+      doc.text(String(s.orcCount), 70, y);
+      doc.text(String(s.pedCount), 95, y);
+      doc.text(currency(s.comissaoLoja), 125, y);
+      doc.text(String(s.repName || '—').slice(0, 14), 150, y);
+      doc.text(currency(s.comissaoRepresentante), 178, y);
+      y += 6;
+      if (y > 265) { doc.addPage(); y = 20; }
+    });
+
+    doc.save('relatorio-desempenho.pdf');
+  };
+
   return (
     <div>
+      <div className="admin-form">
+        <label>Loja
+          <select value={filterStore} onChange={e => { setFilterStore(e.target.value); setFilterVendor(''); }}>
+            <option value="">Todas as lojas</option>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </label>
+        <label>Vendedor
+          <select value={filterVendor} onChange={e => setFilterVendor(e.target.value)}>
+            <option value="">Todos os vendedores</option>
+            {vendorOptions.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </label>
+        <div className="admin-form-actions" style={{ gap: 12 }}>
+          <label style={{ flex: 1 }}>De
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </label>
+          <label style={{ flex: 1 }}>Até
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </label>
+        </div>
+        <button className="btn-secondary" disabled={!pdfLibReady} onClick={downloadReport}>
+          <Printer size={16} /> {pdfLibReady ? 'Baixar relatório em PDF' : 'Preparando gerador de PDF…'}
+        </button>
+      </div>
+
       <h3 className="report-heading">Por vendedor</h3>
       <div className="report-table-wrap">
         <table className="report-table">
@@ -999,7 +1125,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes }) {
             ))}
           </tbody>
         </table>
-        {porVendedor.length === 0 && <p className="hint">Nenhum vendedor cadastrado ainda.</p>}
+        {porVendedor.length === 0 && <p className="hint">Nenhum vendedor encontrado para esse filtro.</p>}
       </div>
 
       <h3 className="report-heading">Por loja</h3>
@@ -1019,7 +1145,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes }) {
             ))}
           </tbody>
         </table>
-        {porLoja.length === 0 && <p className="hint">Nenhuma loja cadastrada ainda.</p>}
+        {porLoja.length === 0 && <p className="hint">Nenhuma loja encontrada para esse filtro.</p>}
       </div>
     </div>
   );
@@ -1087,6 +1213,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .topbar-sub { font-size: 12px; color: var(--ink-soft); }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
 .icon-btn { background: none; border: 1px solid var(--line); width: 34px; height: 34px; border-radius: 3px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ink); }
+.icon-btn:disabled { opacity: 0.5; cursor: default; }
+.spin { animation: spin-anim 1s linear infinite; }
+@keyframes spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .cart-btn { position: relative; background: var(--ink); color: #fff; border: none; width: 34px; height: 34px; border-radius: 3px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .badge { position: absolute; top: -6px; right: -6px; background: var(--teal); color: #fff; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px; }
 .search-row { display: flex; align-items: center; gap: 8px; margin: 16px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; color: var(--ink-soft); }
