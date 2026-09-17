@@ -65,6 +65,41 @@ function isWithinPeriod(isoDate, period, customFrom, customTo) {
   return true;
 }
 
+function drawPdfTable(doc, x0, y0, columns, rows) {
+  const bottom = doc.internal.pageSize.getHeight() - 20;
+  const totalWidth = columns.reduce((s, c) => s + c.width, 0);
+  let y = y0;
+  const drawHeader = () => {
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'bold');
+    let x = x0;
+    columns.forEach(col => {
+      if (col.align === 'right') doc.text(col.label, x + col.width, y, { align: 'right' });
+      else doc.text(col.label, x, y);
+      x += col.width;
+    });
+    doc.setFont(undefined, 'normal');
+    y += 2;
+    doc.line(x0, y, x0 + totalWidth, y);
+    y += 6;
+  };
+  drawHeader();
+  doc.setFontSize(9);
+  rows.forEach(row => {
+    let x = x0;
+    columns.forEach((col, i) => {
+      let val = row[i] == null ? '' : String(row[i]);
+      if (col.maxChars) val = val.slice(0, col.maxChars);
+      if (col.align === 'right') doc.text(val, x + col.width, y, { align: 'right' });
+      else doc.text(val, x, y);
+      x += col.width;
+    });
+    y += 7;
+    if (y > bottom) { doc.addPage(); y = 20; drawHeader(); }
+  });
+  return y;
+}
+
 function vendorRanking(storeId, orders, vendors) {
   return vendors.filter(v => v.storeId === storeId).map(v => {
     const pedidos = orders.filter(o => o.vendorId === v.id && o.storeId === storeId && o.status === 'pedido');
@@ -140,6 +175,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [checkout, setCheckout] = useState({ nome: '', telefone: '', endereco: '', obs: '', descontoGeral: '' });
   const [lastOrder, setLastOrder] = useState(null);
+  const [orderSummaryBack, setOrderSummaryBack] = useState('catalog');
   const [adminTab, setAdminTab] = useState('produtos');
 
   const loadKey = async (key, fallback) => {
@@ -288,6 +324,10 @@ export default function App() {
     setScreen('orderSummary');
   };
 
+  const openOrderView = (order, backScreen) => {
+    setLastOrder(order); setOrderSummaryBack(backScreen); setScreen('orderSummary');
+  };
+
   const convertToPedido = async (orderId) => {
     const now = new Date().toISOString();
     const next = await mutateOrders(current => current.map(o => o.id === orderId ? { ...o, status: 'pedido', convertedAt: now } : o));
@@ -312,30 +352,30 @@ export default function App() {
     if (order.cliente.telefone) { doc.text(`Telefone: ${order.cliente.telefone}`, 14, y); y += 6; }
     if (order.cliente.endereco) { doc.text(`Endereço: ${order.cliente.endereco}`, 14, y); y += 6; }
     y += 4;
-    doc.setFontSize(11);
-    doc.text('Produto', 14, y); doc.text('Qtd', 108, y); doc.text('Desc.', 128, y); doc.text('Preço', 145, y); doc.text('Subtotal', 170, y);
-    y += 2;
-    doc.line(14, y, 196, y); y += 6;
-    doc.setFontSize(10);
-    order.items.forEach(i => {
+    const itemCols = [
+      { label: 'Produto', width: 78, maxChars: 42 },
+      { label: 'Qtd', width: 16, align: 'right' },
+      { label: 'Desc.', width: 18, align: 'right' },
+      { label: 'Preço', width: 30, align: 'right' },
+      { label: 'Subtotal', width: 32, align: 'right' },
+    ];
+    const rows = order.items.map(i => {
       const lineTotal = i.price * i.qty * (1 - (i.discountPercent || 0) / 100);
-      doc.text(String(i.name).slice(0, 38), 14, y);
-      doc.text(String(i.qty), 108, y);
-      doc.text(`${i.discountPercent || 0}%`, 128, y);
-      doc.text(currency(i.price), 145, y);
-      doc.text(currency(lineTotal), 170, y);
-      y += 6;
-      const pkg = packagingLine(i);
-      if (pkg) {
-        doc.setFontSize(8);
-        doc.setTextColor(120);
-        doc.text(pkg, 14, y);
-        doc.setTextColor(0);
-        doc.setFontSize(10);
-        y += 6;
-      } else { y += 1; }
-      if (y > 265) { doc.addPage(); y = 20; }
+      return [i.name, i.qty, `${i.discountPercent || 0}%`, currency(i.price), currency(lineTotal)];
     });
+    y = drawPdfTable(doc, 14, y, itemCols, rows);
+    const specLines = order.items.map(packagingLine).filter(Boolean);
+    if (specLines.length) {
+      doc.setFontSize(8);
+      doc.setTextColor(120);
+      specLines.forEach(line => {
+        doc.text(line, 14, y); y += 5;
+        if (y > 270) { doc.addPage(); y = 20; }
+      });
+      doc.setTextColor(0);
+      doc.setFontSize(10);
+      y += 1;
+    }
     y += 2;
     doc.line(14, y, 196, y); y += 8;
     doc.setFontSize(10);
@@ -397,19 +437,19 @@ export default function App() {
         <CheckoutScreen {...{ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen }} />
       )}
       {screen === 'orderSummary' && lastOrder && (
-        <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido }} />
+        <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen: orderSummaryBack }} />
       )}
       {screen === 'quotes' && currentVendor && (
-        <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen }} />
+        <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen, onOpenOrder: (o) => openOrderView(o, 'quotes') }} />
       )}
       {screen === 'myReport' && currentVendor && (
-        <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady }} />
+        <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'myReport') }} />
       )}
       {screen === 'repDashboard' && currentRepresentante && (
-        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady }} />
+        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard') }} />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing }} />
+        <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -654,12 +694,13 @@ function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPe
   );
 }
 
-function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido }) {
+function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen = 'catalog' }) {
   const isPedido = order.status === 'pedido';
+  const isVendorFlow = backScreen === 'catalog';
   return (
     <div className="screen">
       <header className="topbar no-print">
-        <button className="icon-btn" onClick={() => setScreen('catalog')} title="Início"><Home size={18} /></button>
+        <button className="icon-btn" onClick={() => setScreen(backScreen)} title="Voltar"><Home size={18} /></button>
         <div className="topbar-title">{isPedido ? 'Pedido confirmado' : 'Orçamento salvo'}</div>
         <div style={{ width: 34 }} />
       </header>
@@ -700,13 +741,13 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
           <Printer size={16} /> {pdfLibReady ? 'Baixar PDF' : 'Preparando gerador de PDF…'}
         </button>
         <a className="btn-whatsapp" href={waLink(order)} target="_blank" rel="noopener noreferrer"><MessageCircle size={16} /> Enviar por WhatsApp</a>
-        <button className="btn-primary" onClick={() => setScreen('catalog')}>Novo orçamento</button>
+        <button className="btn-primary" onClick={() => setScreen(backScreen)}>{isVendorFlow ? 'Novo orçamento' : 'Voltar'}</button>
       </div>
     </div>
   );
 }
 
-function QuotesScreen({ orders, convertToPedido, setScreen }) {
+function QuotesScreen({ orders, convertToPedido, setScreen, onOpenOrder }) {
   const sorted = [...orders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return (
     <div className="screen">
@@ -717,14 +758,14 @@ function QuotesScreen({ orders, convertToPedido, setScreen }) {
       </header>
       <div className="admin-list pad">
         {sorted.map(o => (
-          <div key={o.id} className="order-row">
+          <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
             <div>
               <div><strong>{o.cliente.nome}</strong></div>
               <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')} · {currency(o.total)}</div>
               <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
             </div>
             {o.status === 'orcamento' && (
-              <button className="btn-secondary small" onClick={() => convertToPedido(o.id)}><CheckCircle2 size={14} /> Converter</button>
+              <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
             )}
           </div>
         ))}
@@ -756,7 +797,7 @@ function PeriodFilter({ period, setPeriod, customFrom, setCustomFrom, customTo, 
   );
 }
 
-function MyReportScreen({ orders, setScreen, pdfLibReady }) {
+function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -779,19 +820,19 @@ function MyReportScreen({ orders, setScreen, pdfLibReady }) {
     doc.text('Meu relatório de vendas', 14, y); y += 8;
     doc.setFontSize(9);
     doc.text(`Orçamentos: ${orcamentos.length} (${currency(totalOrcamentos)}) · Pedidos: ${pedidos.length} (${currency(totalPedidos)})`, 14, y); y += 10;
-    doc.setFontSize(10);
-    doc.text('Data', 14, y); doc.text('Cliente', 45, y); doc.text('Status', 110, y); doc.text('Total', 140, y); doc.text('Comissão', 170, y);
-    y += 2; doc.line(14, y, 196, y); y += 6;
-    filtered.forEach(o => {
-      doc.text(new Date(o.createdAt).toLocaleDateString('pt-BR'), 14, y);
-      doc.text(String(o.cliente.nome).slice(0, 28), 45, y);
-      doc.text(o.status === 'pedido' ? 'Pedido' : 'Orçam.', 110, y);
-      doc.text(currency(o.total), 140, y);
-      doc.text(o.status === 'pedido' ? currency(o.commissionVendorValue) : '—', 170, y);
-      y += 7;
-      if (y > 270) { doc.addPage(); y = 20; }
-    });
-    y += 4; doc.line(14, y, 196, y); y += 8;
+    const cols = [
+      { label: 'Data', width: 26 },
+      { label: 'Cliente', width: 60, maxChars: 32 },
+      { label: 'Status', width: 26 },
+      { label: 'Total', width: 34, align: 'right' },
+      { label: 'Comissão', width: 34, align: 'right' },
+    ];
+    const rows = filtered.map(o => [
+      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.cliente.nome, o.status === 'pedido' ? 'Pedido' : 'Orçamento',
+      currency(o.total), o.status === 'pedido' ? currency(o.commissionVendorValue) : '—',
+    ]);
+    y = drawPdfTable(doc, 14, y, cols, rows);
+    y += 4; doc.line(14, y, 194, y); y += 8;
     doc.setFontSize(11);
     doc.text(`Total em vendas: ${currency(totalOrcamentos + totalPedidos)}`, 14, y); y += 6;
     doc.text(`Total de comissão: ${currency(totalComissao)}`, 14, y);
@@ -823,7 +864,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady }) {
 
         <div className="admin-list">
           {filtered.map(o => (
-            <div key={o.id} className="order-row">
+            <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
               <div>
                 <div><strong>{o.cliente.nome}</strong></div>
                 <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
@@ -848,7 +889,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady }) {
   );
 }
 
-function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady }) {
+function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -883,28 +924,28 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
+    const doc = new jsPDF({ orientation: 'landscape' });
     let y = 20;
     doc.setFontSize(15);
     doc.text('Relatório do representante', 14, y); y += 8;
     doc.setFontSize(9);
     const storeLabel = storeFilter ? (myStores.find(s => s.id === storeFilter)?.name || '') : 'Todas as lojas';
     doc.text(`Representante: ${currentRepresentante.name} · Loja: ${storeLabel}`, 14, y); y += 10;
-    doc.setFontSize(10);
-    doc.text('Data', 14, y); doc.text('Loja', 40, y); doc.text('Cliente', 80, y); doc.text('Status', 118, y); doc.text('Total', 140, y); doc.text('C.loja', 160, y); doc.text('C.repr.', 178, y);
-    y += 2; doc.line(14, y, 196, y); y += 6;
-    detailedFiltered.forEach(o => {
-      doc.text(new Date(o.createdAt).toLocaleDateString('pt-BR'), 14, y);
-      doc.text(String(o.storeName).slice(0, 16), 40, y);
-      doc.text(String(o.cliente.nome).slice(0, 14), 80, y);
-      doc.text(o.status === 'pedido' ? 'Pedido' : 'Orçam.', 118, y);
-      doc.text(currency(o.total), 140, y);
-      doc.text(o.status === 'pedido' ? currency(o.commissionStoreValue) : '—', 160, y);
-      doc.text(o.status === 'pedido' ? currency(o.commissionRepresentanteValue) : '—', 178, y);
-      y += 7;
-      if (y > 265) { doc.addPage(); y = 20; }
-    });
-    y += 4; doc.line(14, y, 196, y); y += 8;
+    const cols = [
+      { label: 'Data', width: 24 },
+      { label: 'Loja', width: 44, maxChars: 26 },
+      { label: 'Cliente', width: 44, maxChars: 26 },
+      { label: 'Status', width: 26 },
+      { label: 'Total', width: 34, align: 'right' },
+      { label: 'C. loja', width: 34, align: 'right' },
+      { label: 'C. repr.', width: 34, align: 'right' },
+    ];
+    const rows = detailedFiltered.map(o => [
+      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.storeName, o.cliente.nome, o.status === 'pedido' ? 'Pedido' : 'Orçamento',
+      currency(o.total), o.status === 'pedido' ? currency(o.commissionStoreValue) : '—', o.status === 'pedido' ? currency(o.commissionRepresentanteValue) : '—',
+    ]);
+    y = drawPdfTable(doc, 14, y, cols, rows);
+    y += 4; doc.line(14, y, 14 + cols.reduce((s, c) => s + c.width, 0), y); y += 8;
     doc.setFontSize(11);
     doc.text(`Faturamento total: ${currency(detFaturamento)}`, 14, y); y += 6;
     doc.text(`Comissão da loja: ${currency(detComissaoLoja)}`, 14, y); y += 6;
@@ -978,7 +1019,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
         <h3 className="report-heading">Orçamentos e pedidos {storeFilter ? `— ${myStores.find(s => s.id === storeFilter)?.name}` : '(todas as lojas)'}</h3>
         <div className="admin-list">
           {detailedFiltered.map(o => (
-            <div key={o.id} className="order-row">
+            <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
               <div>
                 <div><strong>{o.cliente.nome}</strong> — {o.storeName}</div>
                 <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
@@ -1004,7 +1045,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing }) {
+function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing, onOpenOrder }) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -1028,7 +1069,7 @@ function AdminScreen({ stores, vendors, representantes, products, orders, update
         {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
-        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} />}
+        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} onOpenOrder={onOpenOrder} />}
         {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} />}
       </div>
@@ -1330,7 +1371,7 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
   );
 }
 
-function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) {
+function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, onOpenOrder }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -1358,7 +1399,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
+    const doc = new jsPDF({ orientation: 'landscape' });
     let y = 20;
     doc.setFontSize(15);
     doc.text('Relatório de pedidos e comissões', 14, y); y += 8;
@@ -1367,22 +1408,22 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
     const vendorName = filterVendor ? (vendors.find(v => v.id === filterVendor)?.name || '') : 'Todos os vendedores';
     doc.text(`Loja: ${storeName}`, 14, y); y += 5;
     doc.text(`Vendedor: ${vendorName}`, 14, y); y += 5;
-    doc.text(`Período: ${dateFrom || 'início'} até ${dateTo || 'hoje'}`, 14, y); y += 8;
-    doc.setFontSize(10);
-    doc.text('Data', 14, y); doc.text('Cliente', 36, y); doc.text('Vendedor', 82, y); doc.text('Status', 118, y); doc.text('Total', 140, y); doc.text('C.loja', 160, y); doc.text('C.vend.', 178, y);
-    y += 2; doc.line(14, y, 196, y); y += 6;
-    filtered.forEach(o => {
-      doc.text(new Date(o.createdAt).toLocaleDateString('pt-BR'), 14, y);
-      doc.text(String(o.cliente.nome).slice(0, 18), 36, y);
-      doc.text(String(o.vendorName).slice(0, 14), 82, y);
-      doc.text(o.status === 'pedido' ? 'Pedido' : 'Orçam.', 118, y);
-      doc.text(currency(o.total), 140, y);
-      doc.text(currency(o.commissionStoreValue), 160, y);
-      doc.text(currency(o.commissionVendorValue), 178, y);
-      y += 7;
-      if (y > 270) { doc.addPage(); y = 20; }
-    });
-    y += 4; doc.line(14, y, 196, y); y += 8;
+    doc.text(`Período: ${dateFrom || 'início'} até ${dateTo || 'hoje'}`, 14, y); y += 10;
+    const cols = [
+      { label: 'Data', width: 24 },
+      { label: 'Cliente', width: 44, maxChars: 26 },
+      { label: 'Vendedor', width: 40, maxChars: 24 },
+      { label: 'Status', width: 26 },
+      { label: 'Total', width: 34, align: 'right' },
+      { label: 'C. loja', width: 34, align: 'right' },
+      { label: 'C. vend.', width: 34, align: 'right' },
+    ];
+    const rows = filtered.map(o => [
+      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.cliente.nome, o.vendorName, o.status === 'pedido' ? 'Pedido' : 'Orçamento',
+      currency(o.total), currency(o.commissionStoreValue), currency(o.commissionVendorValue),
+    ]);
+    y = drawPdfTable(doc, 14, y, cols, rows);
+    y += 4; doc.line(14, y, 14 + cols.reduce((s, c) => s + c.width, 0), y); y += 8;
     doc.setFontSize(11);
     doc.text(`Total vendido (pedidos): ${currency(totalVendas)}`, 14, y); y += 6;
     doc.text(`Comissão lojas: ${currency(totalComissaoLoja)}`, 14, y); y += 6;
@@ -1432,7 +1473,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
       </div>
       <div className="admin-list">
         {filtered.map(o => (
-          <div key={o.id} className="order-row">
+          <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
             <div>
               <div><strong>{o.cliente.nome}</strong> — {o.vendorName} ({o.storeName})</div>
               <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
@@ -1443,7 +1484,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
               <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
               <span className="muted">Vend.: {currency(o.commissionVendorValue)}</span>
               {o.status === 'orcamento' && (
-                <button className="btn-secondary small" onClick={() => convertToPedido(o.id)}><CheckCircle2 size={14} /> Converter</button>
+                <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
               )}
             </div>
           </div>
@@ -1526,7 +1567,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
+    const doc = new jsPDF({ orientation: 'landscape' });
     let y = 20;
     doc.setFontSize(15);
     doc.text('Relatório de desempenho', 14, y); y += 8;
@@ -1538,58 +1579,49 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
 
     doc.setFontSize(12);
     doc.text('Por vendedor', 14, y); y += 7;
-    doc.setFontSize(9);
-    doc.text('Vendedor', 14, y); doc.text('Loja', 60, y); doc.text('Orçam.', 100, y); doc.text('Pedidos', 125, y); doc.text('Conv.', 155, y); doc.text('Comissão', 172, y);
-    y += 2; doc.line(14, y, 196, y); y += 6;
-    porVendedor.forEach(v => {
-      doc.text(String(v.name).slice(0, 22), 14, y);
-      doc.text(String(v.storeName).slice(0, 16), 60, y);
-      doc.text(String(v.orcCount), 100, y);
-      doc.text(String(v.pedCount), 125, y);
-      doc.text(`${v.taxaConversao.toFixed(0)}%`, 155, y);
-      doc.text(currency(v.comissao), 172, y);
-      y += 6;
-      if (y > 265) { doc.addPage(); y = 20; }
-    });
-    y += 2; doc.line(14, y, 196, y); y += 6;
+    const colsVendedor = [
+      { label: 'Vendedor', width: 44, maxChars: 26 },
+      { label: 'Loja', width: 40, maxChars: 24 },
+      { label: 'Orçam.', width: 24, align: 'right' },
+      { label: 'Pedidos', width: 24, align: 'right' },
+      { label: 'Conv.', width: 22, align: 'right' },
+      { label: 'Comissão', width: 34, align: 'right' },
+    ];
+    const rowsVendedor = porVendedor.map(v => [v.name, v.storeName, v.orcCount, v.pedCount, `${v.taxaConversao.toFixed(0)}%`, currency(v.comissao)]);
+    y = drawPdfTable(doc, 14, y, colsVendedor, rowsVendedor);
+    y += 4; doc.line(14, y, 14 + colsVendedor.reduce((s, c) => s + c.width, 0), y); y += 7;
     doc.setFontSize(9);
     doc.text(`Total: ${totVendOrc} orçam. (${currency(totVendOrcValue)}) · ${totVendPed} pedidos (${currency(totVendPedValue)}) · Comissão ${currency(totVendComissao)}`, 14, y);
 
-    y += 12;
+    y += 14;
     doc.setFontSize(12);
     doc.text('Por loja', 14, y); y += 7;
-    doc.setFontSize(9);
-    doc.text('Loja', 14, y); doc.text('Orçam.', 70, y); doc.text('Pedidos', 95, y); doc.text('C. loja', 125, y); doc.text('Representante', 150, y); doc.text('C. repr.', 178, y);
-    y += 2; doc.line(14, y, 196, y); y += 6;
-    porLoja.forEach(s => {
-      doc.text(String(s.name).slice(0, 26), 14, y);
-      doc.text(String(s.orcCount), 70, y);
-      doc.text(String(s.pedCount), 95, y);
-      doc.text(currency(s.comissaoLoja), 125, y);
-      doc.text(String(s.repName || '—').slice(0, 14), 150, y);
-      doc.text(currency(s.comissaoRepresentante), 178, y);
-      y += 6;
-      if (y > 265) { doc.addPage(); y = 20; }
-    });
-    y += 2; doc.line(14, y, 196, y); y += 6;
+    const colsLoja = [
+      { label: 'Loja', width: 44, maxChars: 26 },
+      { label: 'Orçam.', width: 26, align: 'right' },
+      { label: 'Pedidos', width: 26, align: 'right' },
+      { label: 'C. loja', width: 30, align: 'right' },
+      { label: 'Representante', width: 40, maxChars: 24 },
+      { label: 'C. repr.', width: 30, align: 'right' },
+    ];
+    const rowsLoja = porLoja.map(s => [s.name, s.orcCount, s.pedCount, currency(s.comissaoLoja), s.repName || '—', currency(s.comissaoRepresentante)]);
+    y = drawPdfTable(doc, 14, y, colsLoja, rowsLoja);
+    y += 4; doc.line(14, y, 14 + colsLoja.reduce((s, c) => s + c.width, 0), y); y += 7;
     doc.setFontSize(9);
     doc.text(`Total: ${totLojaOrc} orçam. (${currency(totLojaOrcValue)}) · ${totLojaPed} pedidos (${currency(totLojaPedValue)}) · C.loja ${currency(totLojaComissao)} · C.repr. ${currency(totLojaComissaoRep)}`, 14, y);
 
-    y += 12;
+    y += 14;
     doc.setFontSize(12);
     doc.text('Por representante', 14, y); y += 7;
-    doc.setFontSize(9);
-    doc.text('Representante', 14, y); doc.text('Loja', 70, y); doc.text('Pedidos', 120, y); doc.text('Comissão', 155, y);
-    y += 2; doc.line(14, y, 196, y); y += 6;
-    porRepresentante.forEach(r => {
-      doc.text(String(r.name).slice(0, 26), 14, y);
-      doc.text(String(r.storeName).slice(0, 20), 70, y);
-      doc.text(String(r.pedCount), 120, y);
-      doc.text(currency(r.comissao), 155, y);
-      y += 6;
-      if (y > 265) { doc.addPage(); y = 20; }
-    });
-    y += 2; doc.line(14, y, 196, y); y += 6;
+    const colsRep = [
+      { label: 'Representante', width: 50, maxChars: 30 },
+      { label: 'Loja', width: 60, maxChars: 36 },
+      { label: 'Pedidos', width: 30, align: 'right' },
+      { label: 'Comissão', width: 34, align: 'right' },
+    ];
+    const rowsRep = porRepresentante.map(r => [r.name, r.storeName, r.pedCount, currency(r.comissao)]);
+    y = drawPdfTable(doc, 14, y, colsRep, rowsRep);
+    y += 4; doc.line(14, y, 14 + colsRep.reduce((s, c) => s + c.width, 0), y); y += 7;
     doc.setFontSize(9);
     doc.text(`Total: ${totRepPed} pedidos (${currency(totRepPedValue)}) · Comissão ${currency(totRepComissao)}`, 14, y);
 
@@ -1845,6 +1877,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .stat-value { font-size: 18px; font-weight: 700; margin-top: 4px; }
 .stat-card.total-footer { font-size: 13px; }
 .order-row { display: flex; justify-content: space-between; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; font-size: 13px; gap: 10px; margin-bottom: 8px; }
+.order-row.clickable { cursor: pointer; }
+.order-row.clickable:hover { border-color: var(--ink-soft); }
 .order-row-values { text-align: right; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 .report-heading { font-family: 'Fraunces', serif; font-size: 15px; margin: 20px 0 10px; }
 .report-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
