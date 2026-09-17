@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2 } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog } from 'lucide-react';
 import { storage } from './storage';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -29,11 +29,29 @@ function resizeImage(file, maxW = 640, quality = 0.72) {
   });
 }
 
+function itemPackagingInfo(item) {
+  const pesoTotal = item.peso ? Number(item.peso) * item.qty : null;
+  const embalagensNecessarias = item.qtdEmbalagem ? Math.ceil(item.qty / Number(item.qtdEmbalagem)) : null;
+  const caixasNecessarias = (!item.caixaNaoSeAplica && item.qtdCaixa) ? Math.ceil(item.qty / Number(item.qtdCaixa)) : null;
+  return { pesoTotal, embalagensNecessarias, caixasNecessarias, caixaNaoSeAplica: item.caixaNaoSeAplica };
+}
+
+function packagingLine(item) {
+  const info = itemPackagingInfo(item);
+  const parts = [];
+  if (info.pesoTotal) parts.push(`Peso total: ${info.pesoTotal.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg`);
+  if (info.embalagensNecessarias) parts.push(`Embalagens: ${info.embalagensNecessarias}`);
+  if (info.caixaNaoSeAplica) parts.push('Caixa: não se aplica');
+  else if (info.caixasNecessarias) parts.push(`Caixas: ${info.caixasNecessarias}`);
+  return parts.join(' · ');
+}
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [pdfLibReady, setPdfLibReady] = useState(false);
   const [stores, setStores] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [representantes, setRepresentantes] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [adminPin, setAdminPin] = useState('1234');
@@ -72,10 +90,10 @@ export default function App() {
           return r ? JSON.parse(r.value) : fallback;
         } catch { return fallback; }
       };
-      const [s, v, p, o, pin] = await Promise.all([
-        load('stores', []), load('vendors', []), load('products', []), load('orders', []), load('adminPin', '1234'),
+      const [s, v, rep, p, o, pin] = await Promise.all([
+        load('stores', []), load('vendors', []), load('representantes', []), load('products', []), load('orders', []), load('adminPin', '1234'),
       ]);
-      setStores(s); setVendors(v); setProducts(p); setOrders(o); setAdminPin(pin);
+      setStores(s); setVendors(v); setRepresentantes(rep); setProducts(p); setOrders(o); setAdminPin(pin);
       setReady(true);
     })();
   }, []);
@@ -85,6 +103,7 @@ export default function App() {
   };
   const updateStores = (list) => { setStores(list); persist('stores', list); };
   const updateVendors = (list) => { setVendors(list); persist('vendors', list); };
+  const updateRepresentantes = (list) => { setRepresentantes(list); persist('representantes', list); };
   const updateProducts = (list) => { setProducts(list); persist('products', list); };
   const updateOrders = (list) => { setOrders(list); persist('orders', list); };
   const updateAdminPin = (pin) => { setAdminPin(pin); persist('adminPin', pin); };
@@ -136,20 +155,29 @@ export default function App() {
   const salvarOrcamento = () => {
     if (!checkout.nome.trim()) return;
     const store = stores.find(s => s.id === currentVendor.storeId);
+    const representante = representantes.find(r => r.storeId === currentVendor.storeId);
     const commissionStoreValue = cartTotal * ((store?.commissionPercent || 0) / 100);
     const commissionVendorValue = cartTotal * ((currentVendor?.commissionPercent || 0) / 100);
+    const commissionRepresentanteValue = representante ? cartTotal * ((representante.commissionPercent || 0) / 100) : 0;
     const order = {
       id: uid(), createdAt: new Date().toISOString(),
       vendorId: currentVendor.id, vendorName: currentVendor.name,
       storeId: currentVendor.storeId, storeName: store?.name || '',
+      representanteId: representante?.id || null,
+      representanteName: representante?.name || null,
+      representanteCommissionPercent: representante?.commissionPercent || 0,
       cliente: { ...checkout },
-      items: cartDetailed.map(i => ({ productId: i.product.id, name: i.product.name, price: i.product.price, qty: i.qty, discountPercent: i.discPercent })),
+      items: cartDetailed.map(i => ({
+        productId: i.product.id, name: i.product.name, price: i.product.price, qty: i.qty, discountPercent: i.discPercent,
+        peso: i.product.peso || null, tamanho: i.product.tamanho || null,
+        qtdEmbalagem: i.product.qtdEmbalagem || null, qtdCaixa: i.product.qtdCaixa || null, caixaNaoSeAplica: !!i.product.caixaNaoSeAplica,
+      })),
       subtotal: cartSubtotal,
       generalDiscountPercent,
       total: cartTotal,
       commissionStorePercent: store?.commissionPercent || 0,
       commissionVendorPercent: currentVendor?.commissionPercent || 0,
-      commissionStoreValue, commissionVendorValue,
+      commissionStoreValue, commissionVendorValue, commissionRepresentanteValue,
       status: 'orcamento',
       convertedAt: null,
     };
@@ -191,8 +219,17 @@ export default function App() {
       doc.text(`${i.discountPercent || 0}%`, 128, y);
       doc.text(currency(i.price), 145, y);
       doc.text(currency(lineTotal), 170, y);
-      y += 7;
-      if (y > 270) { doc.addPage(); y = 20; }
+      y += 6;
+      const pkg = packagingLine(i);
+      if (pkg) {
+        doc.setFontSize(8);
+        doc.setTextColor(120);
+        doc.text(pkg, 14, y);
+        doc.setTextColor(0);
+        doc.setFontSize(10);
+        y += 6;
+      } else { y += 1; }
+      if (y > 265) { doc.addPage(); y = 20; }
     });
     y += 2;
     doc.line(14, y, 196, y); y += 8;
@@ -216,7 +253,8 @@ export default function App() {
       ...order.items.map(i => {
         const lineTotal = i.price * i.qty * (1 - (i.discountPercent || 0) / 100);
         const descTxt = i.discountPercent ? ` (desc. ${i.discountPercent}%)` : '';
-        return `${i.qty}x ${i.name}${descTxt} - ${currency(lineTotal)}`;
+        const pkg = packagingLine(i);
+        return `${i.qty}x ${i.name}${descTxt} - ${currency(lineTotal)}${pkg ? ' [' + pkg + ']' : ''}`;
       }),
       '',
       order.generalDiscountPercent ? `Desconto geral: ${order.generalDiscountPercent}%` : null,
@@ -250,7 +288,7 @@ export default function App() {
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen }} />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, products, orders, updateStores, updateVendors, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido }} />
+        <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido }} />
       )}
     </div>
   );
@@ -474,7 +512,13 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
           <tbody>
             {order.items.map(i => {
               const lineTotal = i.price * i.qty * (1 - (i.discountPercent || 0) / 100);
-              return <tr key={i.productId}><td>{i.name}</td><td>{i.qty}</td><td>{i.discountPercent || 0}%</td><td>{currency(lineTotal)}</td></tr>;
+              const pkg = packagingLine(i);
+              return (
+                <React.Fragment key={i.productId}>
+                  <tr><td>{i.name}</td><td>{i.qty}</td><td>{i.discountPercent || 0}%</td><td>{currency(lineTotal)}</td></tr>
+                  {pkg && <tr className="spec-row"><td colSpan={4}>{pkg}</td></tr>}
+                </React.Fragment>
+              );
             })}
           </tbody>
         </table>
@@ -524,7 +568,7 @@ function QuotesScreen({ orders, convertToPedido, setScreen }) {
   );
 }
 
-function AdminScreen({ stores, vendors, products, orders, updateStores, updateVendors, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido }) {
+function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido }) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -535,14 +579,18 @@ function AdminScreen({ stores, vendors, products, orders, updateStores, updateVe
         <button className={adminTab === 'produtos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('produtos')}><Package size={14} /> Produtos</button>
         <button className={adminTab === 'lojas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('lojas')}><Store size={14} /> Lojas</button>
         <button className={adminTab === 'vendedores' ? 'tab active' : 'tab'} onClick={() => setAdminTab('vendedores')}><Users size={14} /> Vendedores</button>
+        <button className={adminTab === 'representantes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('representantes')}><UserCog size={14} /> Representantes</button>
         <button className={adminTab === 'pedidos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('pedidos')}><Receipt size={14} /> Orçamentos/Pedidos</button>
+        <button className={adminTab === 'relatorios' ? 'tab active' : 'tab'} onClick={() => setAdminTab('relatorios')}><BarChart3 size={14} /> Relatórios</button>
         <button className={adminTab === 'config' ? 'tab active' : 'tab'} onClick={() => setAdminTab('config')}><Settings size={14} /> Config</button>
       </div>
       <div className="admin-body">
         {adminTab === 'produtos' && <ProductsAdmin products={products} updateProducts={updateProducts} />}
-        {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} />}
+        {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
+        {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
         {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} />}
+        {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} />}
       </div>
     </div>
@@ -638,7 +686,7 @@ function ProductsAdmin({ products, updateProducts }) {
   );
 }
 
-function StoresAdmin({ stores, updateStores }) {
+function StoresAdmin({ stores, updateStores, vendors, representantes }) {
   const empty = { id: null, name: '', commissionPercent: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
@@ -663,15 +711,23 @@ function StoresAdmin({ stores, updateStores }) {
           <button className="btn-primary" onClick={save}>{editingId ? 'Salvar alterações' : 'Adicionar loja'}</button>
           {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
         </div>
+        <p className="hint">Depois de criar a loja, cadastre o(s) vendedor(es) dela na aba "Vendedores" ou, se for atendida por um representante externo, cadastre na aba "Representantes".</p>
       </div>
       <div className="admin-list">
-        {stores.map(s => (
-          <div key={s.id} className="admin-list-item">
-            <div className="admin-list-info"><div>{s.name}</div><div className="muted">Comissão: {s.commissionPercent}%</div></div>
-            <button className="icon-btn" onClick={() => edit(s)}>✎</button>
-            <button className="icon-btn" onClick={() => remove(s.id)}><Trash2 size={16} /></button>
-          </div>
-        ))}
+        {stores.map(s => {
+          const vCount = vendors.filter(v => v.storeId === s.id).length;
+          const rep = representantes.find(r => r.storeId === s.id);
+          return (
+            <div key={s.id} className="admin-list-item">
+              <div className="admin-list-info">
+                <div>{s.name}</div>
+                <div className="muted">Comissão: {s.commissionPercent}% · {vCount} vendedor(es){rep ? ` · Representante: ${rep.name} (${rep.commissionPercent}%)` : ''}</div>
+              </div>
+              <button className="icon-btn" onClick={() => edit(s)}>✎</button>
+              <button className="icon-btn" onClick={() => remove(s.id)}><Trash2 size={16} /></button>
+            </div>
+          );
+        })}
         {stores.length === 0 && <p className="hint">Nenhuma loja cadastrada ainda.</p>}
       </div>
     </div>
@@ -722,6 +778,53 @@ function VendorsAdmin({ vendors, stores, updateVendors }) {
           </div>
         ))}
         {vendors.length === 0 && <p className="hint">Nenhum vendedor cadastrado ainda.</p>}
+      </div>
+    </div>
+  );
+}
+
+function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
+  const empty = { id: null, name: '', storeId: '', commissionPercent: '' };
+  const [form, setForm] = useState(empty);
+  const [editingId, setEditingId] = useState(null);
+  const save = () => {
+    if (!form.name.trim() || !form.storeId) return;
+    if (editingId) updateRepresentantes(representantes.map(r => r.id === editingId ? { ...form, id: editingId, commissionPercent: Number(form.commissionPercent) || 0 } : r));
+    else updateRepresentantes([...representantes, { ...form, id: uid(), commissionPercent: Number(form.commissionPercent) || 0 }]);
+    setForm(empty); setEditingId(null);
+  };
+  const edit = (r) => { setForm({ ...r, commissionPercent: String(r.commissionPercent) }); setEditingId(r.id); };
+  const remove = (id) => updateRepresentantes(representantes.filter(r => r.id !== id));
+  return (
+    <div>
+      <div className="admin-form">
+        <p className="hint">Use esta área para lojas atendidas por um representante externo (comum em lojas de fora do estado), em vez de um vendedor próprio dentro do app.</p>
+        <label>Nome do representante
+          <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Carlos Mendes" />
+        </label>
+        <label>Loja representada
+          <select value={form.storeId} onChange={e => setForm({ ...form, storeId: e.target.value })}>
+            <option value="">Selecione a loja</option>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </label>
+        <label>Comissão sobre o faturamento da loja (%)
+          <input type="number" step="0.1" value={form.commissionPercent} onChange={e => setForm({ ...form, commissionPercent: e.target.value })} placeholder="Ex: 4" />
+        </label>
+        <div className="admin-form-actions">
+          <button className="btn-primary" onClick={save}>{editingId ? 'Salvar alterações' : 'Adicionar representante'}</button>
+          {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
+        </div>
+      </div>
+      <div className="admin-list">
+        {representantes.map(r => (
+          <div key={r.id} className="admin-list-item">
+            <div className="admin-list-info"><div>{r.name}</div><div className="muted">{stores.find(s => s.id === r.storeId)?.name || '—'} · Comissão {r.commissionPercent}% do faturamento</div></div>
+            <button className="icon-btn" onClick={() => edit(r)}>✎</button>
+            <button className="icon-btn" onClick={() => remove(r.id)}><Trash2 size={16} /></button>
+          </div>
+        ))}
+        {representantes.length === 0 && <p className="hint">Nenhum representante cadastrado ainda.</p>}
       </div>
     </div>
   );
@@ -854,6 +957,74 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
   );
 }
 
+function RelatoriosAdmin({ orders, stores, vendors, representantes }) {
+  const porVendedor = vendors.map(v => {
+    const os = orders.filter(o => o.vendorId === v.id);
+    const pedidos = os.filter(o => o.status === 'pedido');
+    const orcamentosValue = os.reduce((s, o) => s + o.total, 0);
+    const pedidosValue = pedidos.reduce((s, o) => s + o.total, 0);
+    const comissao = pedidos.reduce((s, o) => s + o.commissionVendorValue, 0);
+    const taxaConversao = os.length ? (pedidos.length / os.length) * 100 : 0;
+    const storeName = stores.find(s => s.id === v.storeId)?.name || '—';
+    return { id: v.id, name: v.name, storeName, orcCount: os.length, orcValue: orcamentosValue, pedCount: pedidos.length, pedValue: pedidosValue, taxaConversao, comissao };
+  });
+
+  const porLoja = stores.map(s => {
+    const os = orders.filter(o => o.storeId === s.id);
+    const pedidos = os.filter(o => o.status === 'pedido');
+    const orcamentosValue = os.reduce((sum, o) => sum + o.total, 0);
+    const pedidosValue = pedidos.reduce((sum, o) => sum + o.total, 0);
+    const comissaoLoja = pedidos.reduce((sum, o) => sum + o.commissionStoreValue, 0);
+    const rep = representantes.find(r => r.storeId === s.id);
+    const comissaoRepresentante = pedidos.reduce((sum, o) => sum + (o.commissionRepresentanteValue || 0), 0);
+    return { id: s.id, name: s.name, orcCount: os.length, orcValue: orcamentosValue, pedCount: pedidos.length, pedValue: pedidosValue, comissaoLoja, repName: rep?.name || null, comissaoRepresentante };
+  });
+
+  return (
+    <div>
+      <h3 className="report-heading">Por vendedor</h3>
+      <div className="report-table-wrap">
+        <table className="report-table">
+          <thead><tr><th>Vendedor</th><th>Loja</th><th>Orçam.</th><th>Pedidos</th><th>Tx. conversão</th><th>Comissão</th></tr></thead>
+          <tbody>
+            {porVendedor.map(v => (
+              <tr key={v.id}>
+                <td>{v.name}</td>
+                <td>{v.storeName}</td>
+                <td>{v.orcCount} · {currency(v.orcValue)}</td>
+                <td>{v.pedCount} · {currency(v.pedValue)}</td>
+                <td>{v.taxaConversao.toFixed(0)}%</td>
+                <td>{currency(v.comissao)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {porVendedor.length === 0 && <p className="hint">Nenhum vendedor cadastrado ainda.</p>}
+      </div>
+
+      <h3 className="report-heading">Por loja</h3>
+      <div className="report-table-wrap">
+        <table className="report-table">
+          <thead><tr><th>Loja</th><th>Orçam.</th><th>Pedidos</th><th>Comissão loja</th><th>Representante</th><th>Comissão repr.</th></tr></thead>
+          <tbody>
+            {porLoja.map(s => (
+              <tr key={s.id}>
+                <td>{s.name}</td>
+                <td>{s.orcCount} · {currency(s.orcValue)}</td>
+                <td>{s.pedCount} · {currency(s.pedValue)}</td>
+                <td>{currency(s.comissaoLoja)}</td>
+                <td>{s.repName || '—'}</td>
+                <td>{currency(s.comissaoRepresentante)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {porLoja.length === 0 && <p className="hint">Nenhuma loja cadastrada ainda.</p>}
+      </div>
+    </div>
+  );
+}
+
 function ConfigAdmin({ adminPin, updateAdminPin }) {
   const [pin, setPin] = useState(adminPin);
   return (
@@ -862,7 +1033,7 @@ function ConfigAdmin({ adminPin, updateAdminPin }) {
         <input value={pin} onChange={e => setPin(e.target.value)} maxLength={8} />
       </label>
       <button className="btn-primary" onClick={() => updateAdminPin(pin)}>Salvar PIN</button>
-      <p className="hint">Este PIN dá acesso à área de administração (produtos, lojas, vendedores e comissões). A segurança aqui é simples, sem criptografia — guarde-o com os administradores de confiança.</p>
+      <p className="hint">Este PIN dá acesso à área de administração (produtos, lojas, vendedores, representantes e comissões). A segurança aqui é simples, sem criptografia — guarde-o com os administradores de confiança.</p>
     </div>
   );
 }
@@ -959,6 +1130,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .order-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .order-table th { text-align: left; color: var(--ink-soft); font-weight: 500; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .order-table td { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.order-table tr.spec-row td { padding: 0 0 8px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--ink-soft); }
 .order-total { text-align: right; font-size: 16px; font-weight: 700; margin: 16px 0; color: var(--clay-dark); }
 .status-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 20px; margin-top: 4px; }
 .status-badge.status-orcamento { background: var(--bg); color: var(--ink-soft); border: 1px solid var(--line); }
@@ -984,6 +1156,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .stat-value { font-size: 18px; font-weight: 700; margin-top: 4px; }
 .order-row { display: flex; justify-content: space-between; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; font-size: 13px; gap: 10px; margin-bottom: 8px; }
 .order-row-values { text-align: right; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.report-heading { font-family: 'Fraunces', serif; font-size: 15px; margin: 20px 0 10px; }
+.report-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
+.report-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+.report-table th { text-align: left; color: var(--ink-soft); font-weight: 500; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.report-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
 @media print {
   .no-print { display: none !important; }
   .app-root { background: #fff; }
