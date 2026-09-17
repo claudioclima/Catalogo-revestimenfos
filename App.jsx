@@ -337,6 +337,10 @@ export default function App() {
     }
   };
 
+  const deleteOrder = async (orderId) => {
+    await mutateOrders(current => current.filter(o => o.id !== orderId));
+  };
+
   const generatePDF = (order) => {
     if (!window.jspdf) return;
     const { jsPDF } = window.jspdf;
@@ -449,7 +453,7 @@ export default function App() {
         <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard') }} />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -1045,7 +1049,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing, onOpenOrder }) {
+function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder }) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -1069,7 +1073,7 @@ function AdminScreen({ stores, vendors, representantes, products, orders, update
         {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
-        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} onOpenOrder={onOpenOrder} />}
+        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} />}
         {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} />}
       </div>
@@ -1371,7 +1375,7 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
   );
 }
 
-function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, onOpenOrder }) {
+function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -1483,9 +1487,14 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, on
               <span>{currency(o.total)}</span>
               <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
               <span className="muted">Vend.: {currency(o.commissionVendorValue)}</span>
-              {o.status === 'orcamento' && (
-                <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
-              )}
+              <div style={{ display: 'flex', gap: 6 }}>
+                {o.status === 'orcamento' && (
+                  <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
+                )}
+                <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apagar este ${o.status === 'pedido' ? 'pedido' : 'orçamento'} de ${o.cliente.nome}? Essa ação não pode ser desfeita.`)) deleteOrder(o.id); }}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
           </div>
         ))}
