@@ -73,6 +73,42 @@ function vendorRanking(storeId, orders, vendors) {
   }).sort((a, b) => b.total - a.total);
 }
 
+async function shareOrDownloadPdf(doc, filename) {
+  try {
+    const blob = doc.output('blob');
+    const file = new File([blob], filename, { type: 'application/pdf' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: filename });
+      return 'shared';
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return 'cancelled';
+  }
+  doc.save(filename);
+  return 'downloaded';
+}
+
+function ReportPdfButtons({ pdfLibReady, buildDoc, filename }) {
+  const [status, setStatus] = useState('');
+  const handleDownload = () => { const doc = buildDoc(); doc.save(filename); };
+  const handleShare = async () => {
+    const doc = buildDoc();
+    const result = await shareOrDownloadPdf(doc, filename);
+    setStatus(result === 'downloaded' ? 'Seu aparelho não suporta compartilhar direto — o PDF foi baixado.' : '');
+  };
+  return (
+    <div className="pdf-actions">
+      <button className="btn-secondary" disabled={!pdfLibReady} onClick={handleDownload}>
+        <Printer size={16} /> {pdfLibReady ? 'Baixar PDF' : 'Preparando gerador de PDF…'}
+      </button>
+      <button className="btn-whatsapp" disabled={!pdfLibReady} onClick={handleShare}>
+        <MessageCircle size={16} /> Compartilhar por WhatsApp
+      </button>
+      {status && <p className="hint">{status}</p>}
+    </div>
+  );
+}
+
 const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', products: 'products', orders: 'orders', adminPin: 'adminPin' };
 
 export default function App() {
@@ -367,10 +403,10 @@ export default function App() {
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen }} />
       )}
       {screen === 'myReport' && currentVendor && (
-        <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen }} />
+        <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady }} />
       )}
       {screen === 'repDashboard' && currentRepresentante && (
-        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing }} />
+        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady }} />
       )}
       {screen === 'admin' && (
         <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing }} />
@@ -720,7 +756,7 @@ function PeriodFilter({ period, setPeriod, customFrom, setCustomFrom, customTo, 
   );
 }
 
-function MyReportScreen({ orders, setScreen }) {
+function MyReportScreen({ orders, setScreen, pdfLibReady }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -734,6 +770,33 @@ function MyReportScreen({ orders, setScreen }) {
   const totalOrcamentos = orcamentos.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const totalPedidos = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const totalComissao = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
+
+  const buildDoc = () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    let y = 20;
+    doc.setFontSize(15);
+    doc.text('Meu relatório de vendas', 14, y); y += 8;
+    doc.setFontSize(9);
+    doc.text(`Orçamentos: ${orcamentos.length} (${currency(totalOrcamentos)}) · Pedidos: ${pedidos.length} (${currency(totalPedidos)})`, 14, y); y += 10;
+    doc.setFontSize(10);
+    doc.text('Data', 14, y); doc.text('Cliente', 45, y); doc.text('Status', 110, y); doc.text('Total', 140, y); doc.text('Comissão', 170, y);
+    y += 2; doc.line(14, y, 196, y); y += 6;
+    filtered.forEach(o => {
+      doc.text(new Date(o.createdAt).toLocaleDateString('pt-BR'), 14, y);
+      doc.text(String(o.cliente.nome).slice(0, 28), 45, y);
+      doc.text(o.status === 'pedido' ? 'Pedido' : 'Orçam.', 110, y);
+      doc.text(currency(o.total), 140, y);
+      doc.text(o.status === 'pedido' ? currency(o.commissionVendorValue) : '—', 170, y);
+      y += 7;
+      if (y > 270) { doc.addPage(); y = 20; }
+    });
+    y += 4; doc.line(14, y, 196, y); y += 8;
+    doc.setFontSize(11);
+    doc.text(`Total em vendas: ${currency(totalOrcamentos + totalPedidos)}`, 14, y); y += 6;
+    doc.text(`Total de comissão: ${currency(totalComissao)}`, 14, y);
+    return doc;
+  };
 
   return (
     <div className="screen">
@@ -779,21 +842,24 @@ function MyReportScreen({ orders, setScreen }) {
             <strong>Total do período:</strong> {currency(totalOrcamentos + totalPedidos)} em vendas · {currency(totalComissao)} de comissão
           </div>
         )}
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="meu-relatorio-vendas.pdf" />
       </div>
     </div>
   );
 }
 
-function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing }) {
+function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [storeFilter, setStoreFilter] = useState('');
   const [expandedStoreId, setExpandedStoreId] = useState(null);
 
   const myStores = stores.filter(s => s.representanteId === currentRepresentante.id);
   const myStoreIds = myStores.map(s => s.id);
   const filtered = orders.filter(o => myStoreIds.includes(o.storeId) && isWithinPeriod(o.createdAt, period, customFrom, customTo) && (!statusFilter || o.status === statusFilter));
+  const detailedFiltered = filtered.filter(o => !storeFilter || o.storeId === storeFilter).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const pedidosGeral = filtered.filter(o => o.status === 'pedido');
   const totalComissaoGeral = pedidosGeral.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
 
@@ -811,6 +877,41 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   const totalPedCount = porLoja.reduce((s, l) => s + l.pedCount, 0);
   const totalPedValue = porLoja.reduce((s, l) => s + l.pedValue, 0);
 
+  const detFaturamento = detailedFiltered.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const detComissaoLoja = detailedFiltered.filter(o => o.status === 'pedido').reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
+  const detComissaoRep = detailedFiltered.filter(o => o.status === 'pedido').reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
+
+  const buildDoc = () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    let y = 20;
+    doc.setFontSize(15);
+    doc.text('Relatório do representante', 14, y); y += 8;
+    doc.setFontSize(9);
+    const storeLabel = storeFilter ? (myStores.find(s => s.id === storeFilter)?.name || '') : 'Todas as lojas';
+    doc.text(`Representante: ${currentRepresentante.name} · Loja: ${storeLabel}`, 14, y); y += 10;
+    doc.setFontSize(10);
+    doc.text('Data', 14, y); doc.text('Loja', 40, y); doc.text('Cliente', 80, y); doc.text('Status', 118, y); doc.text('Total', 140, y); doc.text('C.loja', 160, y); doc.text('C.repr.', 178, y);
+    y += 2; doc.line(14, y, 196, y); y += 6;
+    detailedFiltered.forEach(o => {
+      doc.text(new Date(o.createdAt).toLocaleDateString('pt-BR'), 14, y);
+      doc.text(String(o.storeName).slice(0, 16), 40, y);
+      doc.text(String(o.cliente.nome).slice(0, 14), 80, y);
+      doc.text(o.status === 'pedido' ? 'Pedido' : 'Orçam.', 118, y);
+      doc.text(currency(o.total), 140, y);
+      doc.text(o.status === 'pedido' ? currency(o.commissionStoreValue) : '—', 160, y);
+      doc.text(o.status === 'pedido' ? currency(o.commissionRepresentanteValue) : '—', 178, y);
+      y += 7;
+      if (y > 265) { doc.addPage(); y = 20; }
+    });
+    y += 4; doc.line(14, y, 196, y); y += 8;
+    doc.setFontSize(11);
+    doc.text(`Faturamento total: ${currency(detFaturamento)}`, 14, y); y += 6;
+    doc.text(`Comissão da loja: ${currency(detComissaoLoja)}`, 14, y); y += 6;
+    doc.text(`Comissão do representante: ${currency(detComissaoRep)}`, 14, y);
+    return doc;
+  };
+
   return (
     <div className="screen">
       <header className="topbar">
@@ -827,6 +928,12 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
             <option value="">Todos (orçamentos e pedidos)</option>
             <option value="orcamento">Só orçamentos</option>
             <option value="pedido">Só pedidos</option>
+          </select>
+        </label>
+        <label>Loja
+          <select value={storeFilter} onChange={e => setStoreFilter(e.target.value)}>
+            <option value="">Todas as lojas que atendo</option>
+            {myStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </label>
 
@@ -867,6 +974,31 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
             {vendorRanking(expandedStoreId, filtered, vendors).length === 0 && <p className="hint">Nenhum vendedor com pedidos nesse período.</p>}
           </div>
         )}
+
+        <h3 className="report-heading">Orçamentos e pedidos {storeFilter ? `— ${myStores.find(s => s.id === storeFilter)?.name}` : '(todas as lojas)'}</h3>
+        <div className="admin-list">
+          {detailedFiltered.map(o => (
+            <div key={o.id} className="order-row">
+              <div>
+                <div><strong>{o.cliente.nome}</strong> — {o.storeName}</div>
+                <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
+                <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
+              </div>
+              <div className="order-row-values">
+                <span>{currency(o.total)}</span>
+                {o.status === 'pedido' && <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>}
+                {o.status === 'pedido' && <span className="muted">Minha: {currency(o.commissionRepresentanteValue)}</span>}
+              </div>
+            </div>
+          ))}
+          {detailedFiltered.length === 0 && <p className="hint">Nenhum registro para esse filtro.</p>}
+        </div>
+        {detailedFiltered.length > 0 && (
+          <div className="stat-card total-footer">
+            <strong>Faturamento total:</strong> {currency(detFaturamento)} · <strong>Comissão da loja:</strong> {currency(detComissaoLoja)} · <strong>Minha comissão:</strong> {currency(detComissaoRep)}
+          </div>
+        )}
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-representante.pdf" />
       </div>
     </div>
   );
@@ -1224,8 +1356,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
   const totalComissaoVendedor = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
   const totalOrcamentos = orcamentosPendentes.reduce((s, o) => s + (Number(o.total) || 0), 0);
 
-  const downloadReport = () => {
-    if (!window.jspdf) return;
+  const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
     let y = 20;
@@ -1257,7 +1388,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
     doc.text(`Comissão lojas: ${currency(totalComissaoLoja)}`, 14, y); y += 6;
     doc.text(`Comissão vendedores: ${currency(totalComissaoVendedor)}`, 14, y); y += 6;
     doc.text(`Em orçamento (não convertido): ${currency(totalOrcamentos)}`, 14, y);
-    doc.save('relatorio-comissoes.pdf');
+    return doc;
   };
 
   return (
@@ -1290,9 +1421,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido }) 
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </label>
         </div>
-        <button className="btn-secondary" disabled={!pdfLibReady} onClick={downloadReport}>
-          <Printer size={16} /> {pdfLibReady ? 'Baixar relatório em PDF' : 'Preparando gerador de PDF…'}
-        </button>
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-comissoes.pdf" />
       </div>
 
       <div className="stats-row">
@@ -1395,8 +1524,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
   const totRepPedValue = porRepresentante.reduce((s, r) => s + r.pedValue, 0);
   const totRepComissao = porRepresentante.reduce((s, r) => s + r.comissao, 0);
 
-  const downloadReport = () => {
-    if (!window.jspdf) return;
+  const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
     let y = 20;
@@ -1465,7 +1593,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
     doc.setFontSize(9);
     doc.text(`Total: ${totRepPed} pedidos (${currency(totRepPedValue)}) · Comissão ${currency(totRepComissao)}`, 14, y);
 
-    doc.save('relatorio-desempenho.pdf');
+    return doc;
   };
 
   return (
@@ -1497,9 +1625,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </label>
         </div>
-        <button className="btn-secondary" disabled={!pdfLibReady} onClick={downloadReport}>
-          <Printer size={16} /> {pdfLibReady ? 'Baixar relatório em PDF' : 'Preparando gerador de PDF…'}
-        </button>
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-desempenho.pdf" />
       </div>
 
       <h3 className="report-heading">Por vendedor</h3>
@@ -1730,6 +1856,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .ranking-box { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px; margin-top: 4px; }
 .ranking-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .ranking-row:last-child { border-bottom: none; }
+.pdf-actions { display: flex; flex-direction: column; gap: 8px; }
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
 .modal-card { background: var(--surface); border-radius: 6px; padding: 24px; width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
 .modal-title { font-family: 'Fraunces', serif; font-size: 16px; font-weight: 600; }
