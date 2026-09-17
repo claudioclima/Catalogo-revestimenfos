@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar } from 'lucide-react';
 import { storage } from './storage';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -46,6 +46,33 @@ function packagingLine(item) {
   return parts.join(' · ');
 }
 
+function isWithinPeriod(isoDate, period, customFrom, customTo) {
+  if (period === 'todos') return true;
+  const d = new Date(isoDate);
+  const now = new Date();
+  if (period === 'dia') return d.toDateString() === now.toDateString();
+  if (period === 'semana') {
+    const start = new Date(now); start.setDate(now.getDate() - now.getDay()); start.setHours(0, 0, 0, 0);
+    return d >= start;
+  }
+  if (period === 'mes') return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  if (period === 'periodo') {
+    const ds = isoDate.slice(0, 10);
+    if (customFrom && ds < customFrom) return false;
+    if (customTo && ds > customTo) return false;
+    return true;
+  }
+  return true;
+}
+
+function vendorRanking(storeId, orders, vendors) {
+  return vendors.filter(v => v.storeId === storeId).map(v => {
+    const pedidos = orders.filter(o => o.vendorId === v.id && o.storeId === storeId && o.status === 'pedido');
+    const total = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    return { id: v.id, name: v.name, total, count: pedidos.length };
+  }).sort((a, b) => b.total - a.total);
+}
+
 const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', products: 'products', orders: 'orders', adminPin: 'adminPin' };
 
 export default function App() {
@@ -64,11 +91,15 @@ export default function App() {
   const [loginStoreId, setLoginStoreId] = useState('');
   const [loginVendorId, setLoginVendorId] = useState('');
   const [loginPin, setLoginPin] = useState('');
+  const [loginRepId, setLoginRepId] = useState('');
+  const [loginRepPin, setLoginRepPin] = useState('');
   const [loginError, setLoginError] = useState('');
   const [adminPinInput, setAdminPinInput] = useState('');
 
   const [currentVendor, setCurrentVendor] = useState(null);
+  const [currentRepresentante, setCurrentRepresentante] = useState(null);
   const [cart, setCart] = useState([]);
+  const [qtyPromptProductId, setQtyPromptProductId] = useState(null);
   const [activeCategory, setActiveCategory] = useState('Todos');
   const [search, setSearch] = useState('');
   const [checkout, setCheckout] = useState({ nome: '', telefone: '', endereco: '', obs: '', descontoGeral: '' });
@@ -108,11 +139,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (ready && screen === 'admin') { refreshAll(); }
+    if (ready && (screen === 'admin' || screen === 'repDashboard')) { refreshAll(); }
   }, [screen]);
 
-  // Generic "fetch latest, apply change, persist" helper — avoids one device's stale
-  // local copy silently overwriting changes another device already saved.
   const mutate = async (key, updater, setter) => {
     let current;
     try {
@@ -141,29 +170,38 @@ export default function App() {
     if ((vendor.pin || '') !== loginPin) { setLoginError('PIN incorreto.'); return; }
     setCurrentVendor(vendor); setCart([]); setLoginError(''); setScreen('catalog');
   };
+  const doRepresentanteLogin = async () => {
+    const { rep } = await refreshAll();
+    const r = rep.find(x => x.id === loginRepId);
+    if (!r) { setLoginError('Selecione um representante.'); return; }
+    if ((r.pin || '') !== loginRepPin) { setLoginError('PIN incorreto.'); return; }
+    setCurrentRepresentante(r); setLoginError(''); setScreen('repDashboard');
+  };
   const doAdminLogin = () => {
     if (adminPinInput === adminPin) { setScreen('admin'); setLoginError(''); }
     else { setLoginError('PIN de administrador incorreto.'); }
   };
   const logout = () => {
-    setCurrentVendor(null); setCart([]); setScreen('login');
-    setLoginStoreId(''); setLoginVendorId(''); setLoginPin('');
+    setCurrentVendor(null); setCurrentRepresentante(null); setCart([]); setScreen('login');
+    setLoginStoreId(''); setLoginVendorId(''); setLoginPin(''); setLoginRepId(''); setLoginRepPin('');
   };
 
-  const addToCart = (productId) => {
+  const confirmQuantity = (productId, qty) => {
     setCart(prev => {
+      if (qty <= 0) return prev.filter(i => i.productId !== productId);
       const existing = prev.find(i => i.productId === productId);
-      if (existing) return prev.map(i => i.productId === productId ? { ...i, qty: i.qty + 1 } : i);
-      return [...prev, { productId, qty: 1, discountPercent: 0 }];
+      if (existing) return prev.map(i => i.productId === productId ? { ...i, qty } : i);
+      return [...prev, { productId, qty, discountPercent: 0 }];
     });
-  };
-  const setQty = (productId, qty) => {
-    setCart(prev => qty <= 0 ? prev.filter(i => i.productId !== productId) : prev.map(i => i.productId === productId ? { ...i, qty } : i));
+    setQtyPromptProductId(null);
   };
   const setItemDiscount = (productId, value) => {
     setCart(prev => prev.map(i => i.productId === productId ? { ...i, discountPercent: value } : i));
   };
   const removeFromCart = (productId) => setCart(prev => prev.filter(i => i.productId !== productId));
+
+  const currentStore = currentVendor ? stores.find(s => s.id === currentVendor.storeId) : null;
+  const descontoRevendaPercent = currentStore?.modalidade === 'revenda' ? clampPercent(currentStore.descontoRevenda) : 0;
 
   const cartDetailed = cart.map(i => {
     const p = products.find(pr => pr.id === i.productId);
@@ -173,9 +211,10 @@ export default function App() {
     return { ...i, product: p, discPercent, lineTotal };
   }).filter(Boolean);
   const cartSubtotal = cartDetailed.reduce((sum, i) => sum + i.lineTotal, 0);
-  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+  const cartCount = cart.length;
+  const afterResale = cartSubtotal * (1 - descontoRevendaPercent / 100);
   const generalDiscountPercent = clampPercent(checkout.descontoGeral);
-  const cartTotal = cartSubtotal * (1 - generalDiscountPercent / 100);
+  const cartTotal = afterResale * (1 - generalDiscountPercent / 100);
 
   const salvarOrcamento = async () => {
     if (!checkout.nome.trim()) return;
@@ -199,6 +238,7 @@ export default function App() {
         qtdEmbalagem: i.product.qtdEmbalagem || null, qtdCaixa: i.product.qtdCaixa || null, caixaNaoSeAplica: !!i.product.caixaNaoSeAplica,
       })),
       subtotal: cartSubtotal,
+      descontoRevendaPercent,
       generalDiscountPercent,
       total: cartTotal,
       commissionStorePercent: store?.commissionPercent || 0,
@@ -264,6 +304,7 @@ export default function App() {
     doc.line(14, y, 196, y); y += 8;
     doc.setFontSize(10);
     doc.text(`Subtotal: ${currency(order.subtotal)}`, 140, y); y += 6;
+    if (order.descontoRevendaPercent) { doc.text(`Desconto revenda: ${order.descontoRevendaPercent}%`, 140, y); y += 6; }
     if (order.generalDiscountPercent) { doc.text(`Desconto geral: ${order.generalDiscountPercent}%`, 140, y); y += 6; }
     doc.setFontSize(13);
     doc.text(`Total: ${currency(order.total)}`, 140, y);
@@ -286,6 +327,7 @@ export default function App() {
         return `${i.qty}x ${i.name}${descTxt} - ${currency(lineTotal)}${pkg ? ' [' + pkg + ']' : ''}`;
       }),
       '',
+      order.descontoRevendaPercent ? `Desconto revenda: ${order.descontoRevendaPercent}%` : null,
       order.generalDiscountPercent ? `Desconto geral: ${order.generalDiscountPercent}%` : null,
       `*Total: ${currency(order.total)}*`,
       order.cliente.obs ? `Obs: ${order.cliente.obs}` : null,
@@ -295,26 +337,40 @@ export default function App() {
 
   if (!ready) return <div style={{ padding: 40, fontFamily: 'sans-serif' }}>Carregando…</div>;
 
+  const productForQtyPrompt = qtyPromptProductId ? products.find(p => p.id === qtyPromptProductId) : null;
+  const existingQtyForPrompt = qtyPromptProductId ? (cart.find(i => i.productId === qtyPromptProductId)?.qty || 1) : 1;
+
   return (
     <div className="app-root">
       <style>{STYLES}</style>
       {screen === 'login' && (
-        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }} />
+        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }} />
       )}
       {screen === 'catalog' && currentVendor && (
-        <CatalogScreen {...{ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, addToCart, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }} />
+        <>
+          <CatalogScreen {...{ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, onAddClick: setQtyPromptProductId, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }} />
+          {productForQtyPrompt && (
+            <QuantityModal product={productForQtyPrompt} initialQty={existingQtyForPrompt} onConfirm={(qty) => confirmQuantity(productForQtyPrompt.id, qty)} onClose={() => setQtyPromptProductId(null)} />
+          )}
+        </>
       )}
       {screen === 'cart' && (
-        <CartScreen {...{ cartDetailed, setQty, setItemDiscount, removeFromCart, cartSubtotal, setScreen }} />
+        <CartScreen {...{ cartDetailed, setQty: (id, qty) => confirmQuantity(id, qty), setItemDiscount, removeFromCart, cartSubtotal, setScreen }} />
       )}
       {screen === 'checkout' && (
-        <CheckoutScreen {...{ checkout, setCheckout, cartSubtotal, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen }} />
+        <CheckoutScreen {...{ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen }} />
       )}
       {screen === 'orderSummary' && lastOrder && (
         <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido }} />
       )}
       {screen === 'quotes' && currentVendor && (
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen }} />
+      )}
+      {screen === 'myReport' && currentVendor && (
+        <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen }} />
+      )}
+      {screen === 'repDashboard' && currentRepresentante && (
+        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing }} />
       )}
       {screen === 'admin' && (
         <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, refreshAll, refreshing }} />
@@ -323,7 +379,29 @@ export default function App() {
   );
 }
 
-function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }) {
+function QuantityModal({ product, initialQty, onConfirm, onClose }) {
+  const [qty, setQty] = useState(String(initialQty || 1));
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
+  const confirm = () => { const n = Math.max(0, parseInt(qty, 10) || 0); onConfirm(n); };
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-title">{product.name}</div>
+        <div className="modal-sub">{currency(product.price)} / un.</div>
+        <input ref={inputRef} type="number" inputMode="numeric" min="0" className="modal-qty-input" value={qty}
+          onChange={e => setQty(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') confirm(); }} />
+        <div className="modal-actions">
+          <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn-primary" onClick={confirm}>Adicionar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }) {
   return (
     <div className="screen-center">
       <div className="login-card">
@@ -334,9 +412,10 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
         </div>
         <div className="tabs">
           <button className={loginTab === 'vendor' ? 'tab active' : 'tab'} onClick={() => setLoginTab('vendor')}>Vendedor</button>
+          <button className={loginTab === 'rep' ? 'tab active' : 'tab'} onClick={() => setLoginTab('rep')}>Representante</button>
           <button className={loginTab === 'admin' ? 'tab active' : 'tab'} onClick={() => setLoginTab('admin')}>Administração</button>
         </div>
-        {loginTab === 'vendor' ? (
+        {loginTab === 'vendor' && (
           <div className="form-stack">
             <label>Loja
               <select value={loginStoreId} onChange={e => { setLoginStoreId(e.target.value); setLoginVendorId(''); }}>
@@ -357,7 +436,23 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
             <button className="btn-primary" onClick={doVendorLogin}>Entrar</button>
             {stores.length === 0 && <p className="hint">Nenhuma loja cadastrada ainda. Peça ao administrador para configurar o catálogo.</p>}
           </div>
-        ) : (
+        )}
+        {loginTab === 'rep' && (
+          <div className="form-stack">
+            <label>Representante
+              <select value={loginRepId} onChange={e => setLoginRepId(e.target.value)}>
+                <option value="">Selecione seu nome</option>
+                {representantes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </label>
+            <label>PIN
+              <input type="password" inputMode="numeric" maxLength={6} value={loginRepPin} onChange={e => setLoginRepPin(e.target.value)} placeholder="••••" />
+            </label>
+            {loginError && <div className="error">{loginError}</div>}
+            <button className="btn-primary" onClick={doRepresentanteLogin}>Entrar</button>
+          </div>
+        )}
+        {loginTab === 'admin' && (
           <div className="form-stack">
             <label>PIN de administrador
               <input type="password" inputMode="numeric" value={adminPinInput} onChange={e => setAdminPinInput(e.target.value)} placeholder="••••" />
@@ -382,7 +477,7 @@ function productSpecsLine(p) {
   return parts.join(' · ');
 }
 
-function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, addToCart, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }) {
+function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, onAddClick, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }) {
   const store = stores.find(s => s.id === currentVendor.storeId);
   const categories = ['Todos', ...Array.from(new Set(products.map(p => p.category).filter(Boolean)))];
   const filtered = products.filter(p => p.active !== false)
@@ -395,6 +490,7 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
         <div><div className="topbar-title">{store?.name}</div><div className="topbar-sub">{currentVendor.name}</div></div>
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar catálogo" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <button className="icon-btn" onClick={() => setScreen('myReport')} title="Meu relatório de vendas"><BarChart3 size={18} /></button>
           <button className="icon-btn" onClick={() => setScreen('quotes')} title="Meus orçamentos"><FileText size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
           <button className="cart-btn" onClick={() => setScreen('cart')}>
@@ -425,14 +521,14 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
                 {productSpecsLine(p) && <div className="product-specs">{productSpecsLine(p)}</div>}
                 <div className="product-price">{currency(p.price)}</div>
               </div>
-              <button className="add-btn" onClick={() => addToCart(p.id)}><Plus size={16} /></button>
+              <button className="add-btn" onClick={() => onAddClick(p.id)}><Plus size={16} /></button>
             </div>
           ))}
         </div>
       )}
       {cartCount > 0 && (
         <div className="floating-cart" onClick={() => setScreen('cart')}>
-          <span>{cartCount} item{cartCount > 1 ? 's' : ''} no carrinho</span>
+          <span>{cartCount} item{cartCount > 1 ? 's' : ''} diferente{cartCount > 1 ? 's' : ''} no carrinho</span>
           <strong>{currency(cartTotal)}</strong>
         </div>
       )}
@@ -444,7 +540,9 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
   return (
     <div className="screen">
       <header className="topbar">
-        <button className="icon-btn" onClick={() => setScreen('catalog')}><ArrowLeft size={18} /></button>
+        <div className="topbar-left">
+          <button className="icon-btn" onClick={() => setScreen('catalog')} title="Início"><Home size={18} /></button>
+        </div>
         <div className="topbar-title">Carrinho</div>
         <div style={{ width: 34 }} />
       </header>
@@ -469,7 +567,7 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
                 </div>
                 <div className="qty-control">
                   <button onClick={() => setQty(i.productId, i.qty - 1)}><Minus size={14} /></button>
-                  <span>{i.qty}</span>
+                  <span onClick={() => setQty(i.productId, i.qty)}>{i.qty}</span>
                   <button onClick={() => setQty(i.productId, i.qty + 1)}><Plus size={14} /></button>
                 </div>
                 <button className="icon-btn" onClick={() => removeFromCart(i.productId)}><Trash2 size={16} /></button>
@@ -486,13 +584,13 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
   );
 }
 
-function CheckoutScreen({ checkout, setCheckout, cartSubtotal, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen }) {
+function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen }) {
   return (
     <div className="screen">
       <header className="topbar">
-        <button className="icon-btn" onClick={() => setScreen('cart')}><ArrowLeft size={18} /></button>
+        <button className="icon-btn" onClick={() => setScreen('catalog')} title="Início"><Home size={18} /></button>
         <div className="topbar-title">Dados do cliente</div>
-        <div style={{ width: 34 }} />
+        <button className="icon-btn" onClick={() => setScreen('cart')}><ArrowLeft size={18} /></button>
       </header>
       <div className="form-stack pad">
         <label>Nome do cliente *
@@ -511,7 +609,8 @@ function CheckoutScreen({ checkout, setCheckout, cartSubtotal, generalDiscountPe
           <textarea rows={3} value={checkout.obs} onChange={e => setCheckout({ ...checkout, obs: e.target.value })} placeholder="Opcional" />
         </label>
         <div className="cart-total-row"><span>Subtotal</span><span>{currency(cartSubtotal)}</span></div>
-        {generalDiscountPercent > 0 && <div className="cart-total-row muted-row"><span>Desconto geral ({generalDiscountPercent}%)</span><span>- {currency(cartSubtotal - cartTotal)}</span></div>}
+        {descontoRevendaPercent > 0 && <div className="cart-total-row muted-row"><span>Desconto de revenda ({descontoRevendaPercent}%) — automático</span><span>- {currency(cartSubtotal - afterResale)}</span></div>}
+        {generalDiscountPercent > 0 && <div className="cart-total-row muted-row"><span>Desconto geral ({generalDiscountPercent}%)</span><span>- {currency(afterResale - cartTotal)}</span></div>}
         <div className="cart-total-row"><span>Total do orçamento</span><strong>{currency(cartTotal)}</strong></div>
         <button className="btn-primary" disabled={!checkout.nome.trim()} onClick={salvarOrcamento}>Salvar orçamento</button>
       </div>
@@ -524,7 +623,7 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
   return (
     <div className="screen">
       <header className="topbar no-print">
-        <button className="icon-btn" onClick={() => setScreen('catalog')}><ArrowLeft size={18} /></button>
+        <button className="icon-btn" onClick={() => setScreen('catalog')} title="Início"><Home size={18} /></button>
         <div className="topbar-title">{isPedido ? 'Pedido confirmado' : 'Orçamento salvo'}</div>
         <div style={{ width: 34 }} />
       </header>
@@ -552,6 +651,7 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
             })}
           </tbody>
         </table>
+        {order.descontoRevendaPercent > 0 && <p className="muted">Desconto de revenda: {order.descontoRevendaPercent}%</p>}
         {order.generalDiscountPercent > 0 && <p className="muted">Desconto geral: {order.generalDiscountPercent}%</p>}
         <div className="order-total">Total: {currency(order.total)}</div>
         {order.cliente.obs && <p><strong>Obs:</strong> {order.cliente.obs}</p>}
@@ -575,7 +675,7 @@ function QuotesScreen({ orders, convertToPedido, setScreen }) {
   return (
     <div className="screen">
       <header className="topbar">
-        <button className="icon-btn" onClick={() => setScreen('catalog')}><ArrowLeft size={18} /></button>
+        <button className="icon-btn" onClick={() => setScreen('catalog')} title="Início"><Home size={18} /></button>
         <div className="topbar-title">Meus orçamentos</div>
         <div style={{ width: 34 }} />
       </header>
@@ -593,6 +693,180 @@ function QuotesScreen({ orders, convertToPedido, setScreen }) {
           </div>
         ))}
         {sorted.length === 0 && <p className="hint">Você ainda não tem orçamentos salvos.</p>}
+      </div>
+    </div>
+  );
+}
+
+function PeriodFilter({ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }) {
+  return (
+    <div className="period-filter">
+      <div className="chip-row" style={{ padding: 0 }}>
+        {[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês atual'], ['periodo', 'Período'], ['todos', 'Tudo']].map(([key, label]) => (
+          <button key={key} className={period === key ? 'chip active' : 'chip'} onClick={() => setPeriod(key)}>{label}</button>
+        ))}
+      </div>
+      {period === 'periodo' && (
+        <div className="admin-form-actions" style={{ gap: 12, marginTop: 10 }}>
+          <label style={{ flex: 1 }}>De
+            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+          </label>
+          <label style={{ flex: 1 }}>Até
+            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MyReportScreen({ orders, setScreen }) {
+  const [period, setPeriod] = useState('mes');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const filtered = orders.filter(o => isWithinPeriod(o.createdAt, period, customFrom, customTo) && (!statusFilter || o.status === statusFilter))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const orcamentos = filtered.filter(o => o.status === 'orcamento');
+  const pedidos = filtered.filter(o => o.status === 'pedido');
+  const totalOrcamentos = orcamentos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalPedidos = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalComissao = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
+
+  return (
+    <div className="screen">
+      <header className="topbar">
+        <button className="icon-btn" onClick={() => setScreen('catalog')} title="Início"><Home size={18} /></button>
+        <div className="topbar-title">Meu relatório de vendas</div>
+        <div style={{ width: 34 }} />
+      </header>
+      <div className="form-stack pad">
+        <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
+        <label>Status
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="">Todos (orçamentos e pedidos)</option>
+            <option value="orcamento">Só orçamentos</option>
+            <option value="pedido">Só pedidos</option>
+          </select>
+        </label>
+
+        <div className="stats-row">
+          <div className="stat-card"><div className="stat-label">Orçamentos</div><div className="stat-value">{orcamentos.length} · {currency(totalOrcamentos)}</div></div>
+          <div className="stat-card"><div className="stat-label">Pedidos</div><div className="stat-value">{pedidos.length} · {currency(totalPedidos)}</div></div>
+          <div className="stat-card"><div className="stat-label">Minha comissão</div><div className="stat-value">{currency(totalComissao)}</div></div>
+        </div>
+
+        <div className="admin-list">
+          {filtered.map(o => (
+            <div key={o.id} className="order-row">
+              <div>
+                <div><strong>{o.cliente.nome}</strong></div>
+                <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
+                <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
+              </div>
+              <div className="order-row-values">
+                <span>{currency(o.total)}</span>
+                {o.status === 'pedido' && <span className="muted">Comissão: {currency(o.commissionVendorValue)}</span>}
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && <p className="hint">Nenhum registro nesse período.</p>}
+        </div>
+        {filtered.length > 0 && (
+          <div className="stat-card total-footer">
+            <strong>Total do período:</strong> {currency(totalOrcamentos + totalPedidos)} em vendas · {currency(totalComissao)} de comissão
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing }) {
+  const [period, setPeriod] = useState('mes');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [expandedStoreId, setExpandedStoreId] = useState(null);
+
+  const myStores = stores.filter(s => s.representanteId === currentRepresentante.id);
+  const myStoreIds = myStores.map(s => s.id);
+  const filtered = orders.filter(o => myStoreIds.includes(o.storeId) && isWithinPeriod(o.createdAt, period, customFrom, customTo) && (!statusFilter || o.status === statusFilter));
+  const pedidosGeral = filtered.filter(o => o.status === 'pedido');
+  const totalComissaoGeral = pedidosGeral.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
+
+  const porLoja = myStores.map(s => {
+    const os = filtered.filter(o => o.storeId === s.id);
+    const pedidos = os.filter(o => o.status === 'pedido');
+    const orcCount = os.filter(o => o.status === 'orcamento').length;
+    const orcValue = os.filter(o => o.status === 'orcamento').reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const pedValue = pedidos.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const comissao = pedidos.reduce((sum, o) => sum + (Number(o.commissionRepresentanteValue) || 0), 0);
+    return { id: s.id, name: s.name, orcCount, orcValue, pedCount: pedidos.length, pedValue, comissao };
+  });
+  const totalOrcCount = porLoja.reduce((s, l) => s + l.orcCount, 0);
+  const totalOrcValue = porLoja.reduce((s, l) => s + l.orcValue, 0);
+  const totalPedCount = porLoja.reduce((s, l) => s + l.pedCount, 0);
+  const totalPedValue = porLoja.reduce((s, l) => s + l.pedValue, 0);
+
+  return (
+    <div className="screen">
+      <header className="topbar">
+        <div><div className="topbar-title">Painel do representante</div><div className="topbar-sub">{currentRepresentante.name}</div></div>
+        <div className="topbar-actions">
+          <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
+        </div>
+      </header>
+      <div className="form-stack pad">
+        <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
+        <label>Status
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="">Todos (orçamentos e pedidos)</option>
+            <option value="orcamento">Só orçamentos</option>
+            <option value="pedido">Só pedidos</option>
+          </select>
+        </label>
+
+        <div className="stats-row">
+          <div className="stat-card"><div className="stat-label">Lojas atendidas</div><div className="stat-value">{myStores.length}</div></div>
+          <div className="stat-card"><div className="stat-label">Pedidos convertidos</div><div className="stat-value">{pedidosGeral.length}</div></div>
+          <div className="stat-card"><div className="stat-label">Minha comissão total</div><div className="stat-value">{currency(totalComissaoGeral)}</div></div>
+        </div>
+
+        <h3 className="report-heading">Por loja</h3>
+        <div className="report-table-wrap">
+          <table className="report-table">
+            <thead><tr><th>Loja</th><th>Orçam.</th><th>Pedidos</th><th>Comissão</th><th></th></tr></thead>
+            <tbody>
+              {porLoja.map(l => (
+                <tr key={l.id}>
+                  <td>{l.name}</td>
+                  <td>{l.orcCount} · {currency(l.orcValue)}</td>
+                  <td>{l.pedCount} · {currency(l.pedValue)}</td>
+                  <td>{currency(l.comissao)}</td>
+                  <td><button className="btn-secondary small" onClick={() => setExpandedStoreId(expandedStoreId === l.id ? null : l.id)}><TrendingUp size={13} /> Ranking</button></td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr><td><strong>Total</strong></td><td>{totalOrcCount} · {currency(totalOrcValue)}</td><td>{totalPedCount} · {currency(totalPedValue)}</td><td>{currency(totalComissaoGeral)}</td><td></td></tr>
+            </tfoot>
+          </table>
+          {porLoja.length === 0 && <p className="hint">Nenhuma loja vinculada a você ainda.</p>}
+        </div>
+
+        {expandedStoreId && (
+          <div className="ranking-box">
+            <div className="report-heading" style={{ marginTop: 0 }}>Ranking de vendedores — {myStores.find(s => s.id === expandedStoreId)?.name}</div>
+            {vendorRanking(expandedStoreId, filtered, vendors).map((v, idx) => (
+              <div key={v.id} className="ranking-row"><span>{idx + 1}. {v.name}</span><span>{v.count} pedido(s) · {currency(v.total)}</span></div>
+            ))}
+            {vendorRanking(expandedStoreId, filtered, vendors).length === 0 && <p className="hint">Nenhum vendedor com pedidos nesse período.</p>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -720,17 +994,17 @@ function ProductsAdmin({ products, updateProducts }) {
 }
 
 function StoresAdmin({ stores, updateStores, vendors, representantes }) {
-  const empty = { id: null, name: '', endereco: '', commissionPercent: '', representanteId: '', representanteCommissionPercent: '' };
+  const empty = { id: null, name: '', endereco: '', commissionPercent: '', representanteId: '', representanteCommissionPercent: '', modalidade: 'representacao', descontoRevenda: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const save = () => {
     if (!form.name.trim()) return;
-    const payload = { ...form, commissionPercent: Number(form.commissionPercent) || 0, representanteCommissionPercent: Number(form.representanteCommissionPercent) || 0 };
+    const payload = { ...form, commissionPercent: Number(form.commissionPercent) || 0, representanteCommissionPercent: Number(form.representanteCommissionPercent) || 0, descontoRevenda: Number(form.descontoRevenda) || 0 };
     if (editingId) updateStores(current => current.map(s => s.id === editingId ? { ...payload, id: editingId } : s));
     else updateStores(current => [...current, { ...payload, id: uid() }]);
     setForm(empty); setEditingId(null);
   };
-  const edit = (s) => { setForm({ ...empty, ...s, commissionPercent: String(s.commissionPercent), representanteCommissionPercent: String(s.representanteCommissionPercent || '') }); setEditingId(s.id); };
+  const edit = (s) => { setForm({ ...empty, ...s, commissionPercent: String(s.commissionPercent), representanteCommissionPercent: String(s.representanteCommissionPercent || ''), descontoRevenda: String(s.descontoRevenda || ''), modalidade: s.modalidade || 'representacao' }); setEditingId(s.id); };
   const remove = (id) => updateStores(current => current.filter(s => s.id !== id));
   return (
     <div>
@@ -741,6 +1015,17 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
         <label>Endereço completo
           <input value={form.endereco} onChange={e => setForm({ ...form, endereco: e.target.value })} placeholder="Rua, número, bairro, cidade, estado, CEP" />
         </label>
+        <label>Modalidade
+          <select value={form.modalidade} onChange={e => setForm({ ...form, modalidade: e.target.value })}>
+            <option value="representacao">Representação</option>
+            <option value="revenda">Revenda</option>
+          </select>
+        </label>
+        {form.modalidade === 'revenda' && (
+          <label>Desconto de revenda da loja (%) — aplicado automaticamente em todo orçamento
+            <input type="number" step="0.1" value={form.descontoRevenda} onChange={e => setForm({ ...form, descontoRevenda: e.target.value })} placeholder="Ex: 10" />
+          </label>
+        )}
         <label>Comissão da loja (%)
           <input type="number" step="0.1" value={form.commissionPercent} onChange={e => setForm({ ...form, commissionPercent: e.target.value })} placeholder="Ex: 3" />
         </label>
@@ -760,7 +1045,6 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
           {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
         </div>
         {representantes.length === 0 && <p className="hint">Nenhum representante cadastrado ainda — cadastre primeiro na aba "Representantes" para poder vinculá-lo aqui.</p>}
-        <p className="hint">Depois de criar a loja, cadastre o(s) vendedor(es) dela na aba "Vendedores" (para lojas com vendedor próprio) ou vincule um representante já cadastrado no campo acima (para lojas atendidas externamente).</p>
       </div>
       <div className="admin-list">
         {stores.map(s => {
@@ -769,8 +1053,8 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
           return (
             <div key={s.id} className="admin-list-item">
               <div className="admin-list-info">
-                <div>{s.name}{rep && <span className="status-badge status-orcamento" style={{ marginLeft: 6 }}>Representante</span>}</div>
-                <div className="muted">Comissão: {s.commissionPercent}% · {vCount} vendedor(es){rep ? ` · Representante: ${rep.name} (${s.representanteCommissionPercent || 0}%)` : ''}</div>
+                <div>{s.name} <span className="status-badge status-orcamento" style={{ marginLeft: 6 }}>{s.modalidade === 'revenda' ? 'Revenda' : 'Representação'}</span></div>
+                <div className="muted">Comissão: {s.commissionPercent}% · {vCount} vendedor(es){rep ? ` · Representante: ${rep.name} (${s.representanteCommissionPercent || 0}%)` : ''}{s.modalidade === 'revenda' ? ` · Desconto revenda: ${s.descontoRevenda || 0}%` : ''}</div>
                 {s.endereco && <div className="muted">{s.endereco}</div>}
               </div>
               <button className="icon-btn" onClick={() => edit(s)}>✎</button>
@@ -834,7 +1118,7 @@ function VendorsAdmin({ vendors, stores, updateVendors }) {
 }
 
 function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
-  const empty = { id: null, name: '', documento: '', telefone: '', endereco: '', banco: '', agencia: '', conta: '', tipoConta: '', pix: '' };
+  const empty = { id: null, name: '', documento: '', telefone: '', endereco: '', banco: '', agencia: '', conta: '', tipoConta: '', pix: '', pin: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
 
@@ -861,6 +1145,9 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
         </label>
         <label>Endereço
           <input value={form.endereco} onChange={e => setForm({ ...form, endereco: e.target.value })} placeholder="Rua, número, cidade, estado" />
+        </label>
+        <label>PIN de acesso ao painel do representante
+          <input value={form.pin} onChange={e => setForm({ ...form, pin: e.target.value })} placeholder="Ex: 1234" maxLength={6} />
         </label>
         <div className="form-subsection">Dados bancários</div>
         <label>Banco
@@ -897,7 +1184,7 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
               <div className="admin-list-info">
                 <div>{r.name}</div>
                 <div className="muted">{lojasAtendidas.length > 0 ? lojasAtendidas.map(s => s.name).join(', ') : 'Ainda não vinculado a nenhuma loja'}</div>
-                <div className="muted">{r.documento || '—'} · {r.telefone || '—'}</div>
+                <div className="muted">{r.documento || '—'} · {r.telefone || '—'} · PIN {r.pin || '—'}</div>
                 {(r.banco || r.pix) && <div className="muted">{r.banco ? `${r.banco} · Ag ${r.agencia || '—'} · Conta ${r.conta || '—'} (${r.tipoConta || '—'})` : ''} {r.pix ? `· PIX: ${r.pix}` : ''}</div>}
               </div>
               <button className="icon-btn" onClick={() => edit(r)}>✎</button>
@@ -1044,6 +1331,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
   const [filterRepresentante, setFilterRepresentante] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [expandedStoreId, setExpandedStoreId] = useState(null);
 
   const vendorOptions = filterStore ? vendors.filter(v => v.storeId === filterStore) : vendors;
 
@@ -1069,6 +1357,11 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
     const storeName = stores.find(s => s.id === v.storeId)?.name || '—';
     return { id: v.id, name: v.name, storeName, orcCount: os.length, orcValue: orcamentosValue, pedCount: pedidos.length, pedValue: pedidosValue, taxaConversao, comissao };
   });
+  const totVendOrc = porVendedor.reduce((s, v) => s + v.orcCount, 0);
+  const totVendOrcValue = porVendedor.reduce((s, v) => s + v.orcValue, 0);
+  const totVendPed = porVendedor.reduce((s, v) => s + v.pedCount, 0);
+  const totVendPedValue = porVendedor.reduce((s, v) => s + v.pedValue, 0);
+  const totVendComissao = porVendedor.reduce((s, v) => s + v.comissao, 0);
 
   const porLoja = storesToShow.map(s => {
     const os = filteredOrders.filter(o => o.storeId === s.id);
@@ -1080,6 +1373,12 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
     const comissaoRepresentante = pedidos.reduce((sum, o) => sum + (Number(o.commissionRepresentanteValue) || 0), 0);
     return { id: s.id, name: s.name, orcCount: os.length, orcValue: orcamentosValue, pedCount: pedidos.length, pedValue: pedidosValue, comissaoLoja, repName: rep?.name || null, comissaoRepresentante };
   });
+  const totLojaOrc = porLoja.reduce((s, l) => s + l.orcCount, 0);
+  const totLojaOrcValue = porLoja.reduce((s, l) => s + l.orcValue, 0);
+  const totLojaPed = porLoja.reduce((s, l) => s + l.pedCount, 0);
+  const totLojaPedValue = porLoja.reduce((s, l) => s + l.pedValue, 0);
+  const totLojaComissao = porLoja.reduce((s, l) => s + l.comissaoLoja, 0);
+  const totLojaComissaoRep = porLoja.reduce((s, l) => s + l.comissaoRepresentante, 0);
 
   const representantesToShow = filterRepresentante ? representantes.filter(r => r.id === filterRepresentante) : (filterStore ? representantes.filter(r => r.id === stores.find(s => s.id === filterStore)?.representanteId) : representantes);
   const porRepresentante = representantesToShow.map(r => {
@@ -1092,6 +1391,9 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
     const storeNames = lojasDoRep.map(s => s.name).join(', ') || '—';
     return { id: r.id, name: r.name, storeName: storeNames, pedCount: pedidos.length, pedValue: pedidosValue, comissao };
   });
+  const totRepPed = porRepresentante.reduce((s, r) => s + r.pedCount, 0);
+  const totRepPedValue = porRepresentante.reduce((s, r) => s + r.pedValue, 0);
+  const totRepComissao = porRepresentante.reduce((s, r) => s + r.comissao, 0);
 
   const downloadReport = () => {
     if (!window.jspdf) return;
@@ -1121,8 +1423,11 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
       y += 6;
       if (y > 265) { doc.addPage(); y = 20; }
     });
+    y += 2; doc.line(14, y, 196, y); y += 6;
+    doc.setFontSize(9);
+    doc.text(`Total: ${totVendOrc} orçam. (${currency(totVendOrcValue)}) · ${totVendPed} pedidos (${currency(totVendPedValue)}) · Comissão ${currency(totVendComissao)}`, 14, y);
 
-    y += 8;
+    y += 12;
     doc.setFontSize(12);
     doc.text('Por loja', 14, y); y += 7;
     doc.setFontSize(9);
@@ -1138,8 +1443,11 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
       y += 6;
       if (y > 265) { doc.addPage(); y = 20; }
     });
+    y += 2; doc.line(14, y, 196, y); y += 6;
+    doc.setFontSize(9);
+    doc.text(`Total: ${totLojaOrc} orçam. (${currency(totLojaOrcValue)}) · ${totLojaPed} pedidos (${currency(totLojaPedValue)}) · C.loja ${currency(totLojaComissao)} · C.repr. ${currency(totLojaComissaoRep)}`, 14, y);
 
-    y += 8;
+    y += 12;
     doc.setFontSize(12);
     doc.text('Por representante', 14, y); y += 7;
     doc.setFontSize(9);
@@ -1153,6 +1461,9 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
       y += 6;
       if (y > 265) { doc.addPage(); y = 20; }
     });
+    y += 2; doc.line(14, y, 196, y); y += 6;
+    doc.setFontSize(9);
+    doc.text(`Total: ${totRepPed} pedidos (${currency(totRepPedValue)}) · Comissão ${currency(totRepComissao)}`, 14, y);
 
     doc.save('relatorio-desempenho.pdf');
   };
@@ -1207,6 +1518,9 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
               </tr>
             ))}
           </tbody>
+          {porVendedor.length > 0 && (
+            <tfoot><tr><td colSpan={2}><strong>Total</strong></td><td>{totVendOrc} · {currency(totVendOrcValue)}</td><td>{totVendPed} · {currency(totVendPedValue)}</td><td></td><td>{currency(totVendComissao)}</td></tr></tfoot>
+          )}
         </table>
         {porVendedor.length === 0 && <p className="hint">Nenhum vendedor encontrado para esse filtro.</p>}
       </div>
@@ -1214,7 +1528,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
       <h3 className="report-heading">Por loja</h3>
       <div className="report-table-wrap">
         <table className="report-table">
-          <thead><tr><th>Loja</th><th>Orçam.</th><th>Pedidos</th><th>Comissão loja</th><th>Representante</th><th>Comissão repr.</th></tr></thead>
+          <thead><tr><th>Loja</th><th>Orçam.</th><th>Pedidos</th><th>Comissão loja</th><th>Representante</th><th>Comissão repr.</th><th></th></tr></thead>
           <tbody>
             {porLoja.map(s => (
               <tr key={s.id}>
@@ -1224,12 +1538,26 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
                 <td>{currency(s.comissaoLoja)}</td>
                 <td>{s.repName || '—'}</td>
                 <td>{currency(s.comissaoRepresentante)}</td>
+                <td><button className="btn-secondary small" onClick={() => setExpandedStoreId(expandedStoreId === s.id ? null : s.id)}><TrendingUp size={13} /> Ranking</button></td>
               </tr>
             ))}
           </tbody>
+          {porLoja.length > 0 && (
+            <tfoot><tr><td><strong>Total</strong></td><td>{totLojaOrc} · {currency(totLojaOrcValue)}</td><td>{totLojaPed} · {currency(totLojaPedValue)}</td><td>{currency(totLojaComissao)}</td><td></td><td>{currency(totLojaComissaoRep)}</td><td></td></tr></tfoot>
+          )}
         </table>
         {porLoja.length === 0 && <p className="hint">Nenhuma loja encontrada para esse filtro.</p>}
       </div>
+
+      {expandedStoreId && (
+        <div className="ranking-box">
+          <div className="report-heading" style={{ marginTop: 0 }}>Ranking de vendedores — {stores.find(s => s.id === expandedStoreId)?.name}</div>
+          {vendorRanking(expandedStoreId, filteredOrders, vendors).map((v, idx) => (
+            <div key={v.id} className="ranking-row"><span>{idx + 1}. {v.name}</span><span>{v.count} pedido(s) · {currency(v.total)}</span></div>
+          ))}
+          {vendorRanking(expandedStoreId, filteredOrders, vendors).length === 0 && <p className="hint">Nenhum vendedor com pedidos nesse período.</p>}
+        </div>
+      )}
 
       <h3 className="report-heading">Por representante</h3>
       <div className="report-table-wrap">
@@ -1245,6 +1573,9 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
               </tr>
             ))}
           </tbody>
+          {porRepresentante.length > 0 && (
+            <tfoot><tr><td colSpan={2}><strong>Total</strong></td><td>{totRepPed} · {currency(totRepPedValue)}</td><td>{currency(totRepComissao)}</td></tr></tfoot>
+          )}
         </table>
         {porRepresentante.length === 0 && <p className="hint">Nenhum representante encontrado para esse filtro.</p>}
       </div>
@@ -1310,6 +1641,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .hint { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
 .screen { max-width: 720px; margin: 0 auto; min-height: 100vh; background: var(--bg); padding-bottom: 32px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 16px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+.topbar-left { display: flex; gap: 8px; }
 .topbar-title { font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 .topbar-sub { font-size: 12px; color: var(--ink-soft); }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
@@ -1350,7 +1682,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .disc-input { width: 52px; padding: 4px 6px; font-size: 12px; }
 .qty-control { display: flex; align-items: center; gap: 6px; }
 .qty-control button { width: 26px; height: 26px; border: 1px solid var(--line); background: var(--surface); border-radius: 3px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.qty-control span { min-width: 18px; text-align: center; font-size: 13px; font-weight: 600; }
+.qty-control span { min-width: 18px; text-align: center; font-size: 13px; font-weight: 600; cursor: pointer; }
 .cart-summary { padding: 16px; border-top: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: 12px; }
 .cart-total-row { display: flex; justify-content: space-between; align-items: center; font-size: 15px; padding: 8px 0; }
 .cart-total-row.muted-row { font-size: 13px; color: var(--ink-soft); padding: 0; }
@@ -1385,6 +1717,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .stat-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px; }
 .stat-label { font-size: 11px; color: var(--ink-soft); }
 .stat-value { font-size: 18px; font-weight: 700; margin-top: 4px; }
+.stat-card.total-footer { font-size: 13px; }
 .order-row { display: flex; justify-content: space-between; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; font-size: 13px; gap: 10px; margin-bottom: 8px; }
 .order-row-values { text-align: right; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 .report-heading { font-family: 'Fraunces', serif; font-size: 15px; margin: 20px 0 10px; }
@@ -1392,6 +1725,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .report-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
 .report-table th { text-align: left; color: var(--ink-soft); font-weight: 500; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--bg); }
 .report-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.report-table tfoot td { font-weight: 600; background: var(--bg); border-top: 2px solid var(--line); border-bottom: none; }
+.period-filter { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 12px; }
+.ranking-box { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px; margin-top: 4px; }
+.ranking-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.ranking-row:last-child { border-bottom: none; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
+.modal-card { background: var(--surface); border-radius: 6px; padding: 24px; width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
+.modal-title { font-family: 'Fraunces', serif; font-size: 16px; font-weight: 600; }
+.modal-sub { font-size: 13px; color: var(--ink-soft); }
+.modal-qty-input { font-size: 22px; text-align: center; padding: 14px; }
+.modal-actions { display: flex; gap: 10px; }
+.modal-actions .btn-secondary, .modal-actions .btn-primary { flex: 1; }
 @media print {
   .no-print { display: none !important; }
   .app-root { background: #fff; }
