@@ -483,7 +483,7 @@ export default function App() {
     <div className="app-root">
       <style>{STYLES}</style>
       {screen === 'login' && (
-        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }} />
+        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError }} />
       )}
       {screen === 'catalog' && currentVendor && (
         <>
@@ -543,7 +543,8 @@ function QuantityModal({ product, initialQty, onConfirm, onClose }) {
   );
 }
 
-function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }) {
+function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError }) {
+  const switchTab = (tab) => { setLoginTab(tab); setLoginError(''); };
   return (
     <div className="screen-center">
       <div className="login-card">
@@ -553,10 +554,10 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
           <p>Acesso para consultores de vendas</p>
         </div>
         <div className="tabs">
-          <button className={loginTab === 'vendor' ? 'tab active' : 'tab'} onClick={() => setLoginTab('vendor')}>Vendedor</button>
-          <button className={loginTab === 'rep' ? 'tab active' : 'tab'} onClick={() => setLoginTab('rep')}>Representante</button>
-          <button className={loginTab === 'ger' ? 'tab active' : 'tab'} onClick={() => setLoginTab('ger')}>Gerente</button>
-          <button className={loginTab === 'admin' ? 'tab active' : 'tab'} onClick={() => setLoginTab('admin')}>Administração</button>
+          <button className={loginTab === 'vendor' ? 'tab active' : 'tab'} onClick={() => switchTab('vendor')}>Vendedor</button>
+          <button className={loginTab === 'rep' ? 'tab active' : 'tab'} onClick={() => switchTab('rep')}>Representante</button>
+          <button className={loginTab === 'ger' ? 'tab active' : 'tab'} onClick={() => switchTab('ger')}>Gerente</button>
+          <button className={loginTab === 'admin' ? 'tab active' : 'tab'} onClick={() => switchTab('admin')}>Administração</button>
         </div>
         {loginTab === 'vendor' && (
           <div className="form-stack">
