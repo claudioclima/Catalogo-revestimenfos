@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar, User, Handshake, Briefcase, ShieldCheck, Weight } from 'lucide-react';
 import { storage } from './storage';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -44,6 +44,10 @@ function packagingLine(item) {
   if (info.caixaNaoSeAplica) parts.push('Caixa: não se aplica');
   else if (info.caixasNecessarias) parts.push(`Caixas: ${info.caixasNecessarias}`);
   return parts.join(' · ');
+}
+
+function orderTotalWeight(order) {
+  return (order.items || []).reduce((sum, i) => sum + (i.peso ? Number(i.peso) * i.qty : 0), 0);
 }
 
 function isWithinPeriod(isoDate, period, customFrom, customTo) {
@@ -442,6 +446,8 @@ export default function App() {
     doc.text(`Subtotal: ${currency(order.subtotal)}`, 140, y); y += 6;
     if (order.descontoRevendaPercent) { doc.text(`Desconto revenda: ${order.descontoRevendaPercent}%`, 140, y); y += 6; }
     if (order.generalDiscountPercent) { doc.text(`Desconto geral: ${order.generalDiscountPercent}%`, 140, y); y += 6; }
+    const totalWeight = orderTotalWeight(order);
+    if (totalWeight > 0) { doc.text(`Peso total: ${totalWeight.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg`, 140, y); y += 6; }
     doc.setFontSize(13);
     doc.text(`Total: ${currency(order.total)}`, 140, y);
     if (order.cliente.obs) { y += 10; doc.setFontSize(10); doc.text(`Obs: ${order.cliente.obs}`, 14, y); }
@@ -468,6 +474,7 @@ export default function App() {
       '',
       order.descontoRevendaPercent ? `Desconto revenda: ${order.descontoRevendaPercent}%` : null,
       order.generalDiscountPercent ? `Desconto geral: ${order.generalDiscountPercent}%` : null,
+      orderTotalWeight(order) > 0 ? `Peso total: ${orderTotalWeight(order).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg` : null,
       `*Total: ${currency(order.total)}*`,
       order.cliente.obs ? `Obs: ${order.cliente.obs}` : null,
     ].filter(Boolean).join('\n');
@@ -554,10 +561,10 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
           <p>Acesso para consultores de vendas</p>
         </div>
         <div className="tabs login-tabs">
-          <button className={loginTab === 'vendor' ? 'tab active' : 'tab'} onClick={() => switchTab('vendor')}>Vendedor</button>
-          <button className={loginTab === 'rep' ? 'tab active' : 'tab'} onClick={() => switchTab('rep')}>Representante</button>
-          <button className={loginTab === 'ger' ? 'tab active' : 'tab'} onClick={() => switchTab('ger')}>Gerente</button>
-          <button className={loginTab === 'admin' ? 'tab active' : 'tab'} onClick={() => switchTab('admin')}>Administração</button>
+          <button className={loginTab === 'vendor' ? 'tab active' : 'tab'} onClick={() => switchTab('vendor')}><User size={20} /><span>Vendedor</span></button>
+          <button className={loginTab === 'rep' ? 'tab active' : 'tab'} onClick={() => switchTab('rep')}><Handshake size={20} /><span>Representante</span></button>
+          <button className={loginTab === 'ger' ? 'tab active' : 'tab'} onClick={() => switchTab('ger')}><Briefcase size={20} /><span>Gerente</span></button>
+          <button className={loginTab === 'admin' ? 'tab active' : 'tab'} onClick={() => switchTab('admin')}><ShieldCheck size={20} /><span>Admin</span></button>
         </div>
         {loginTab === 'vendor' && (
           <div className="form-stack">
@@ -747,6 +754,12 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
 }
 
 function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen, editingOrderId, cancelEdit }) {
+  const nomeRef = useRef(null);
+  const telefoneRef = useRef(null);
+  const enderecoRef = useRef(null);
+  const descontoRef = useRef(null);
+  const obsRef = useRef(null);
+  const goNext = (nextRef) => (e) => { if (e.key === 'Enter') { e.preventDefault(); nextRef.current && nextRef.current.focus(); } };
   return (
     <div className="screen">
       <header className="topbar">
@@ -759,20 +772,20 @@ function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPe
       )}
       <div className="form-stack pad">
         <label>Nome do cliente *
-          <input value={checkout.nome} onChange={e => setCheckout({ ...checkout, nome: e.target.value })} placeholder="Nome completo" />
+          <input ref={nomeRef} className="input-lg" value={checkout.nome} onChange={e => setCheckout({ ...checkout, nome: e.target.value })} onKeyDown={goNext(telefoneRef)} enterKeyHint="next" placeholder="Nome completo" />
         </label>
         <label>Telefone / WhatsApp
-          <input value={checkout.telefone} onChange={e => setCheckout({ ...checkout, telefone: e.target.value })} placeholder="(00) 00000-0000" />
+          <input ref={telefoneRef} className="input-lg" type="tel" inputMode="tel" value={checkout.telefone} onChange={e => setCheckout({ ...checkout, telefone: e.target.value })} onKeyDown={goNext(enderecoRef)} enterKeyHint="next" placeholder="(00) 00000-0000" />
         </label>
         <label>Endereço de entrega
-          <input value={checkout.endereco} onChange={e => setCheckout({ ...checkout, endereco: e.target.value })} placeholder="Opcional" />
+          <input ref={enderecoRef} className="input-lg" value={checkout.endereco} onChange={e => setCheckout({ ...checkout, endereco: e.target.value })} onKeyDown={goNext(descontoRef)} enterKeyHint="next" placeholder="Opcional" />
         </label>
         <p className="hint">Telefone e endereço podem ficar em branco por enquanto, mas serão obrigatórios para converter este orçamento em pedido.</p>
         <label>Desconto geral (%)
-          <input type="number" min="0" max="100" value={checkout.descontoGeral} onChange={e => setCheckout({ ...checkout, descontoGeral: e.target.value })} placeholder="0" />
+          <input ref={descontoRef} className="input-lg" type="number" inputMode="numeric" min="0" max="100" value={checkout.descontoGeral} onChange={e => setCheckout({ ...checkout, descontoGeral: e.target.value })} onKeyDown={goNext(obsRef)} enterKeyHint="next" placeholder="0" />
         </label>
         <label>Observações
-          <textarea rows={3} value={checkout.obs} onChange={e => setCheckout({ ...checkout, obs: e.target.value })} placeholder="Opcional" />
+          <textarea ref={obsRef} rows={3} className="input-lg" value={checkout.obs} onChange={e => setCheckout({ ...checkout, obs: e.target.value })} placeholder="Opcional" />
         </label>
         <div className="cart-total-row"><span>Subtotal</span><span>{currency(cartSubtotal)}</span></div>
         {descontoRevendaPercent > 0 && <div className="cart-total-row muted-row"><span>Desconto de revenda ({descontoRevendaPercent}%) — automático</span><span>- {currency(cartSubtotal - afterResale)}</span></div>}
@@ -820,6 +833,7 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
         </table>
         {order.descontoRevendaPercent > 0 && <p className="muted">Desconto de revenda: {order.descontoRevendaPercent}%</p>}
         {order.generalDiscountPercent > 0 && <p className="muted">Desconto geral: {order.generalDiscountPercent}%</p>}
+        {orderTotalWeight(order) > 0 && <p className="muted"><Weight size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />Peso total: {orderTotalWeight(order).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg</p>}
         <div className="order-total">Total: {currency(order.total)}</div>
         {order.cliente.obs && <p><strong>Obs:</strong> {order.cliente.obs}</p>}
       </div>
@@ -1078,24 +1092,23 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
         </div>
 
         <h3 className="report-heading">Por loja</h3>
-        <div className="report-table-wrap">
-          <table className="report-table">
-            <thead><tr><th>Loja</th><th>Orçam.</th><th>Pedidos</th><th>Comissão</th><th></th></tr></thead>
-            <tbody>
-              {porLoja.map(l => (
-                <tr key={l.id}>
-                  <td>{l.name}</td>
-                  <td>{l.orcCount} · {currency(l.orcValue)}</td>
-                  <td>{l.pedCount} · {currency(l.pedValue)}</td>
-                  <td>{currency(l.comissao)}</td>
-                  <td><button className="btn-secondary small" onClick={() => setExpandedStoreId(expandedStoreId === l.id ? null : l.id)}><TrendingUp size={13} /> Ranking</button></td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr><td><strong>Total</strong></td><td>{totalOrcCount} · {currency(totalOrcValue)}</td><td>{totalPedCount} · {currency(totalPedValue)}</td><td>{currency(totalComissaoGeral)}</td><td></td></tr>
-            </tfoot>
-          </table>
+        <div className="report-cards">
+          {porLoja.map(l => (
+            <div key={l.id} className="report-card">
+              <div className="report-card-title">{l.name}</div>
+              <div className="report-card-row"><span className="label">Orçamentos</span><span>{l.orcCount} · {currency(l.orcValue)}</span></div>
+              <div className="report-card-row"><span className="label">Pedidos</span><span>{l.pedCount} · {currency(l.pedValue)}</span></div>
+              <div className="report-card-row"><span className="label">Comissão</span><span>{currency(l.comissao)}</span></div>
+              <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => setExpandedStoreId(expandedStoreId === l.id ? null : l.id)}><TrendingUp size={13} /> Ranking</button>
+            </div>
+          ))}
+          {porLoja.length > 0 && (
+            <div className="report-card footer">
+              <div className="report-card-row"><span className="label">Total orçamentos</span><span>{totalOrcCount} · {currency(totalOrcValue)}</span></div>
+              <div className="report-card-row"><span className="label">Total pedidos</span><span>{totalPedCount} · {currency(totalPedValue)}</span></div>
+              <div className="report-card-row"><span className="label">Comissão total</span><span>{currency(totalComissaoGeral)}</span></div>
+            </div>
+          )}
           {porLoja.length === 0 && <p className="hint">Nenhuma loja vinculada a você ainda.</p>}
         </div>
 
@@ -1219,16 +1232,20 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
         </div>
 
         <h3 className="report-heading">Por vendedor</h3>
-        <div className="report-table-wrap">
-          <table className="report-table">
-            <thead><tr><th>Vendedor</th><th>Orçam.</th><th>Pedidos</th></tr></thead>
-            <tbody>
-              {porVendedor.map(v => (
-                <tr key={v.id}><td>{v.name}</td><td>{v.orcCount} · {currency(v.orcValue)}</td><td>{v.pedCount} · {currency(v.pedValue)}</td></tr>
-              ))}
-            </tbody>
-            <tfoot><tr><td><strong>Total</strong></td><td>{totOrcCount} · {currency(totOrcValue)}</td><td>{totPedCount} · {currency(totPedValue)}</td></tr></tfoot>
-          </table>
+        <div className="report-cards">
+          {porVendedor.map(v => (
+            <div key={v.id} className="report-card">
+              <div className="report-card-title">{v.name}</div>
+              <div className="report-card-row"><span className="label">Orçamentos</span><span>{v.orcCount} · {currency(v.orcValue)}</span></div>
+              <div className="report-card-row"><span className="label">Pedidos</span><span>{v.pedCount} · {currency(v.pedValue)}</span></div>
+            </div>
+          ))}
+          {porVendedor.length > 0 && (
+            <div className="report-card footer">
+              <div className="report-card-row"><span className="label">Total orçamentos</span><span>{totOrcCount} · {currency(totOrcValue)}</span></div>
+              <div className="report-card-row"><span className="label">Total pedidos</span><span>{totPedCount} · {currency(totPedValue)}</span></div>
+            </div>
+          )}
           {porVendedor.length === 0 && <p className="hint">Nenhum vendedor cadastrado para esta loja ainda.</p>}
         </div>
 
@@ -1922,49 +1939,47 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
       </div>
 
       <h3 className="report-heading">Por vendedor</h3>
-      <div className="report-table-wrap">
-        <table className="report-table">
-          <thead><tr><th>Vendedor</th><th>Loja</th><th>Orçam.</th><th>Pedidos</th><th>Tx. conversão</th><th>Comissão</th></tr></thead>
-          <tbody>
-            {porVendedor.map(v => (
-              <tr key={v.id}>
-                <td>{v.name}</td>
-                <td>{v.storeName}</td>
-                <td>{v.orcCount} · {currency(v.orcValue)}</td>
-                <td>{v.pedCount} · {currency(v.pedValue)}</td>
-                <td>{v.taxaConversao.toFixed(0)}%</td>
-                <td>{currency(v.comissao)}</td>
-              </tr>
-            ))}
-          </tbody>
-          {porVendedor.length > 0 && (
-            <tfoot><tr><td colSpan={2}><strong>Total</strong></td><td>{totVendOrc} · {currency(totVendOrcValue)}</td><td>{totVendPed} · {currency(totVendPedValue)}</td><td></td><td>{currency(totVendComissao)}</td></tr></tfoot>
-          )}
-        </table>
+      <div className="report-cards">
+        {porVendedor.map(v => (
+          <div key={v.id} className="report-card">
+            <div className="report-card-title">{v.name} <span className="muted">— {v.storeName}</span></div>
+            <div className="report-card-row"><span className="label">Orçamentos</span><span>{v.orcCount} · {currency(v.orcValue)}</span></div>
+            <div className="report-card-row"><span className="label">Pedidos</span><span>{v.pedCount} · {currency(v.pedValue)}</span></div>
+            <div className="report-card-row"><span className="label">Tx. conversão</span><span>{v.taxaConversao.toFixed(0)}%</span></div>
+            <div className="report-card-row"><span className="label">Comissão</span><span>{currency(v.comissao)}</span></div>
+          </div>
+        ))}
+        {porVendedor.length > 0 && (
+          <div className="report-card footer">
+            <div className="report-card-row"><span className="label">Total orçamentos</span><span>{totVendOrc} · {currency(totVendOrcValue)}</span></div>
+            <div className="report-card-row"><span className="label">Total pedidos</span><span>{totVendPed} · {currency(totVendPedValue)}</span></div>
+            <div className="report-card-row"><span className="label">Comissão total</span><span>{currency(totVendComissao)}</span></div>
+          </div>
+        )}
         {porVendedor.length === 0 && <p className="hint">Nenhum vendedor encontrado para esse filtro.</p>}
       </div>
 
       <h3 className="report-heading">Por loja</h3>
-      <div className="report-table-wrap">
-        <table className="report-table">
-          <thead><tr><th>Loja</th><th>Orçam.</th><th>Pedidos</th><th>Comissão loja</th><th>Representante</th><th>Comissão repr.</th><th></th></tr></thead>
-          <tbody>
-            {porLoja.map(s => (
-              <tr key={s.id}>
-                <td>{s.name}</td>
-                <td>{s.orcCount} · {currency(s.orcValue)}</td>
-                <td>{s.pedCount} · {currency(s.pedValue)}</td>
-                <td>{currency(s.comissaoLoja)}</td>
-                <td>{s.repName || '—'}</td>
-                <td>{currency(s.comissaoRepresentante)}</td>
-                <td><button className="btn-secondary small" onClick={() => setExpandedStoreId(expandedStoreId === s.id ? null : s.id)}><TrendingUp size={13} /> Ranking</button></td>
-              </tr>
-            ))}
-          </tbody>
-          {porLoja.length > 0 && (
-            <tfoot><tr><td><strong>Total</strong></td><td>{totLojaOrc} · {currency(totLojaOrcValue)}</td><td>{totLojaPed} · {currency(totLojaPedValue)}</td><td>{currency(totLojaComissao)}</td><td></td><td>{currency(totLojaComissaoRep)}</td><td></td></tr></tfoot>
-          )}
-        </table>
+      <div className="report-cards">
+        {porLoja.map(s => (
+          <div key={s.id} className="report-card">
+            <div className="report-card-title">{s.name}</div>
+            <div className="report-card-row"><span className="label">Orçamentos</span><span>{s.orcCount} · {currency(s.orcValue)}</span></div>
+            <div className="report-card-row"><span className="label">Pedidos</span><span>{s.pedCount} · {currency(s.pedValue)}</span></div>
+            <div className="report-card-row"><span className="label">Comissão loja</span><span>{currency(s.comissaoLoja)}</span></div>
+            <div className="report-card-row"><span className="label">Representante</span><span>{s.repName || '—'}</span></div>
+            <div className="report-card-row"><span className="label">Comissão repr.</span><span>{currency(s.comissaoRepresentante)}</span></div>
+            <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => setExpandedStoreId(expandedStoreId === s.id ? null : s.id)}><TrendingUp size={13} /> Ranking</button>
+          </div>
+        ))}
+        {porLoja.length > 0 && (
+          <div className="report-card footer">
+            <div className="report-card-row"><span className="label">Total orçamentos</span><span>{totLojaOrc} · {currency(totLojaOrcValue)}</span></div>
+            <div className="report-card-row"><span className="label">Total pedidos</span><span>{totLojaPed} · {currency(totLojaPedValue)}</span></div>
+            <div className="report-card-row"><span className="label">Comissão lojas</span><span>{currency(totLojaComissao)}</span></div>
+            <div className="report-card-row"><span className="label">Comissão repr.</span><span>{currency(totLojaComissaoRep)}</span></div>
+          </div>
+        )}
         {porLoja.length === 0 && <p className="hint">Nenhuma loja encontrada para esse filtro.</p>}
       </div>
 
@@ -1979,23 +1994,20 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
       )}
 
       <h3 className="report-heading">Por representante</h3>
-      <div className="report-table-wrap">
-        <table className="report-table">
-          <thead><tr><th>Representante</th><th>Loja</th><th>Pedidos</th><th>Comissão</th></tr></thead>
-          <tbody>
-            {porRepresentante.map(r => (
-              <tr key={r.id}>
-                <td>{r.name}</td>
-                <td>{r.storeName}</td>
-                <td>{r.pedCount} · {currency(r.pedValue)}</td>
-                <td>{currency(r.comissao)}</td>
-              </tr>
-            ))}
-          </tbody>
-          {porRepresentante.length > 0 && (
-            <tfoot><tr><td colSpan={2}><strong>Total</strong></td><td>{totRepPed} · {currency(totRepPedValue)}</td><td>{currency(totRepComissao)}</td></tr></tfoot>
-          )}
-        </table>
+      <div className="report-cards">
+        {porRepresentante.map(r => (
+          <div key={r.id} className="report-card">
+            <div className="report-card-title">{r.name} <span className="muted">— {r.storeName}</span></div>
+            <div className="report-card-row"><span className="label">Pedidos</span><span>{r.pedCount} · {currency(r.pedValue)}</span></div>
+            <div className="report-card-row"><span className="label">Comissão</span><span>{currency(r.comissao)}</span></div>
+          </div>
+        ))}
+        {porRepresentante.length > 0 && (
+          <div className="report-card footer">
+            <div className="report-card-row"><span className="label">Total pedidos</span><span>{totRepPed} · {currency(totRepPedValue)}</span></div>
+            <div className="report-card-row"><span className="label">Comissão total</span><span>{currency(totRepComissao)}</span></div>
+          </div>
+        )}
         {porRepresentante.length === 0 && <p className="hint">Nenhum representante encontrado para esse filtro.</p>}
       </div>
     </div>
@@ -2042,8 +2054,10 @@ h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .login-header p { margin: 6px 0 0; color: var(--ink-soft); font-size: 14px; }
 .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
 .tabs.wrap { flex-wrap: wrap; padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
-.tabs.login-tabs { flex-wrap: wrap; }
-.tabs.login-tabs .tab { padding: 8px 10px; font-size: 12px; }
+.tabs.login-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; border-bottom: none; margin-bottom: 24px; }
+.tabs.login-tabs .tab { flex-direction: column; align-items: center; gap: 5px; padding: 12px 4px; border: 1px solid var(--line); border-radius: 4px; border-bottom: 1px solid var(--line); color: var(--ink-soft); }
+.tabs.login-tabs .tab span { font-size: 10px; font-weight: 500; letter-spacing: 0.01em; }
+.tabs.login-tabs .tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .tab { flex: none; background: none; border: none; padding: 10px 14px; font-size: 13px; font-weight: 500; color: var(--ink-soft); cursor: pointer; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px; }
 .tab.active { color: var(--ink); border-bottom-color: var(--clay); }
 .form-stack { display: flex; flex-direction: column; gap: 14px; }
@@ -2051,6 +2065,7 @@ h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .form-stack label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-soft); }
 input, select, textarea { font-family: inherit; font-size: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); color: var(--ink); }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outline-offset: 1px; }
+.input-lg { padding: 16px 14px; font-size: 16px; }
 .btn-primary { background: var(--clay); color: #fff; border: none; padding: 12px 16px; border-radius: 3px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
 .btn-primary:hover { background: var(--clay-dark); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -2145,6 +2160,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .order-row-values { text-align: right; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 .report-heading { font-family: 'Fraunces', serif; font-size: 15px; margin: 20px 0 10px; }
 .report-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
+.report-cards { display: flex; flex-direction: column; gap: 8px; }
+.report-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; font-size: 13px; }
+.report-card.footer { background: var(--bg); }
+.report-card-title { font-weight: 600; margin-bottom: 6px; }
+.report-card-row { display: flex; justify-content: space-between; padding: 3px 0; gap: 10px; }
+.report-card-row .label { color: var(--ink-soft); }
 .report-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
 .report-table th { text-align: left; color: var(--ink-soft); font-weight: 500; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--bg); }
 .report-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
