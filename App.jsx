@@ -65,6 +65,28 @@ function isWithinPeriod(isoDate, period, customFrom, customTo) {
   return true;
 }
 
+function generateOrderNumber(store, allOrders) {
+  const year = new Date().getFullYear();
+  const lettersOnly = (store?.name || 'XX').toUpperCase().replace(/[^A-Z]/g, '');
+  const prefix = (lettersOnly.slice(0, 2) || 'XX').padEnd(2, 'X');
+  const yearPrefix = `${prefix}-${year}-`;
+  const seqNums = allOrders
+    .filter(o => o.storeId === store?.id && o.numero && o.numero.startsWith(yearPrefix))
+    .map(o => parseInt(o.numero.slice(yearPrefix.length), 10))
+    .filter(n => !isNaN(n));
+  const next = (seqNums.length ? Math.max(...seqNums) : 0) + 1;
+  return `${yearPrefix}${String(next).padStart(4, '0')}`;
+}
+
+function getMissingFields(order) {
+  const missing = [];
+  if (!order.cliente?.nome?.trim()) missing.push('nome do cliente');
+  if (!order.cliente?.telefone?.trim()) missing.push('telefone do cliente');
+  if (!order.cliente?.endereco?.trim()) missing.push('endereço do cliente');
+  if (!order.items || order.items.length === 0) missing.push('itens do pedido');
+  return missing;
+}
+
 function drawPdfTable(doc, x0, y0, columns, rows) {
   const bottom = doc.internal.pageSize.getHeight() - 20;
   const totalWidth = columns.reduce((s, c) => s + c.width, 0);
@@ -144,7 +166,7 @@ function ReportPdfButtons({ pdfLibReady, buildDoc, filename }) {
   );
 }
 
-const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', products: 'products', orders: 'orders', adminPin: 'adminPin' };
+const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin' };
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -153,6 +175,7 @@ export default function App() {
   const [stores, setStores] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [representantes, setRepresentantes] = useState([]);
+  const [gerentes, setGerentes] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [adminPin, setAdminPin] = useState('1234');
@@ -164,16 +187,20 @@ export default function App() {
   const [loginPin, setLoginPin] = useState('');
   const [loginRepId, setLoginRepId] = useState('');
   const [loginRepPin, setLoginRepPin] = useState('');
+  const [loginGerId, setLoginGerId] = useState('');
+  const [loginGerPin, setLoginGerPin] = useState('');
   const [loginError, setLoginError] = useState('');
   const [adminPinInput, setAdminPinInput] = useState('');
 
   const [currentVendor, setCurrentVendor] = useState(null);
   const [currentRepresentante, setCurrentRepresentante] = useState(null);
+  const [currentGerente, setCurrentGerente] = useState(null);
   const [cart, setCart] = useState([]);
   const [qtyPromptProductId, setQtyPromptProductId] = useState(null);
   const [activeCategory, setActiveCategory] = useState('Todos');
   const [search, setSearch] = useState('');
   const [checkout, setCheckout] = useState({ nome: '', telefone: '', endereco: '', obs: '', descontoGeral: '' });
+  const [editingOrderId, setEditingOrderId] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
   const [orderSummaryBack, setOrderSummaryBack] = useState('catalog');
   const [adminTab, setAdminTab] = useState('produtos');
@@ -187,13 +214,13 @@ export default function App() {
 
   const refreshAll = async () => {
     setRefreshing(true);
-    const [s, v, rep, p, o, pin] = await Promise.all([
-      loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []),
+    const [s, v, rep, ger, p, o, pin] = await Promise.all([
+      loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
       loadKey(STORAGE_KEYS.products, []), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'),
     ]);
-    setStores(s); setVendors(v); setRepresentantes(rep); setProducts(p); setOrders(o); setAdminPin(pin);
+    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin);
     setRefreshing(false);
-    return { s, v, rep, p, o, pin };
+    return { s, v, rep, ger, p, o, pin };
   };
 
   useEffect(() => {
@@ -211,7 +238,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (ready && (screen === 'admin' || screen === 'repDashboard')) { refreshAll(); }
+    if (ready && (screen === 'admin' || screen === 'repDashboard' || screen === 'gerenteDashboard')) { refreshAll(); }
   }, [screen]);
 
   const mutate = async (key, updater, setter) => {
@@ -229,6 +256,7 @@ export default function App() {
   const mutateStores = (updater) => mutate(STORAGE_KEYS.stores, updater, setStores);
   const mutateVendors = (updater) => mutate(STORAGE_KEYS.vendors, updater, setVendors);
   const mutateRepresentantes = (updater) => mutate(STORAGE_KEYS.representantes, updater, setRepresentantes);
+  const mutateGerentes = (updater) => mutate(STORAGE_KEYS.gerentes, updater, setGerentes);
   const mutateProducts = (updater) => mutate(STORAGE_KEYS.products, updater, setProducts);
   const mutateOrders = (updater) => mutate(STORAGE_KEYS.orders, updater, setOrders);
   const mutateAdminPin = (pin) => { setAdminPin(pin); storage.set(STORAGE_KEYS.adminPin, JSON.stringify(pin)).catch(() => {}); };
@@ -249,13 +277,20 @@ export default function App() {
     if ((r.pin || '') !== loginRepPin) { setLoginError('PIN incorreto.'); return; }
     setCurrentRepresentante(r); setLoginError(''); setScreen('repDashboard');
   };
+  const doGerenteLogin = async () => {
+    const { ger } = await refreshAll();
+    const g = ger.find(x => x.id === loginGerId);
+    if (!g) { setLoginError('Selecione um gerente.'); return; }
+    if ((g.pin || '') !== loginGerPin) { setLoginError('PIN incorreto.'); return; }
+    setCurrentGerente(g); setLoginError(''); setScreen('gerenteDashboard');
+  };
   const doAdminLogin = () => {
     if (adminPinInput === adminPin) { setScreen('admin'); setLoginError(''); }
     else { setLoginError('PIN de administrador incorreto.'); }
   };
   const logout = () => {
-    setCurrentVendor(null); setCurrentRepresentante(null); setCart([]); setScreen('login');
-    setLoginStoreId(''); setLoginVendorId(''); setLoginPin(''); setLoginRepId(''); setLoginRepPin('');
+    setCurrentVendor(null); setCurrentRepresentante(null); setCurrentGerente(null); setCart([]); setEditingOrderId(null); setScreen('login');
+    setLoginStoreId(''); setLoginVendorId(''); setLoginPin(''); setLoginRepId(''); setLoginRepPin(''); setLoginGerId(''); setLoginGerPin('');
   };
 
   const confirmQuantity = (productId, qty) => {
@@ -296,8 +331,10 @@ export default function App() {
     const commissionStoreValue = cartTotal * ((store?.commissionPercent || 0) / 100);
     const commissionVendorValue = cartTotal * ((currentVendor?.commissionPercent || 0) / 100);
     const commissionRepresentanteValue = representante ? cartTotal * (repPercent / 100) : 0;
-    const order = {
-      id: uid(), createdAt: new Date().toISOString(),
+    const isEdit = !!editingOrderId;
+    const newId = isEdit ? editingOrderId : uid();
+    const baseFields = {
+      id: newId,
       vendorId: currentVendor.id, vendorName: currentVendor.name,
       storeId: currentVendor.storeId, storeName: store?.name || '',
       representanteId: representante?.id || null,
@@ -319,10 +356,28 @@ export default function App() {
       status: 'orcamento',
       convertedAt: null,
     };
-    await mutateOrders(current => [order, ...current]);
-    setLastOrder(order); setCart([]); setCheckout({ nome: '', telefone: '', endereco: '', obs: '', descontoGeral: '' });
+    const next = await mutateOrders(current => {
+      if (isEdit) {
+        const existing = current.find(o => o.id === editingOrderId);
+        const finalOrder = { ...baseFields, numero: existing?.numero || generateOrderNumber(store, current), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+        return current.map(o => o.id === editingOrderId ? finalOrder : o);
+      }
+      const finalOrder = { ...baseFields, numero: generateOrderNumber(store, current), createdAt: new Date().toISOString(), updatedAt: null };
+      return [finalOrder, ...current];
+    });
+    const saved = next.find(o => o.id === newId);
+    setLastOrder(saved); setCart([]); setCheckout({ nome: '', telefone: '', endereco: '', obs: '', descontoGeral: '' }); setEditingOrderId(null);
+    setOrderSummaryBack('catalog');
     setScreen('orderSummary');
   };
+
+  const startEditOrder = (order) => {
+    setEditingOrderId(order.id);
+    setCart(order.items.map(i => ({ productId: i.productId, qty: i.qty, discountPercent: i.discountPercent || 0 })));
+    setCheckout({ nome: order.cliente?.nome || '', telefone: order.cliente?.telefone || '', endereco: order.cliente?.endereco || '', obs: order.cliente?.obs || '', descontoGeral: order.generalDiscountPercent ? String(order.generalDiscountPercent) : '' });
+    setScreen('cart');
+  };
+  const cancelEdit = () => { setEditingOrderId(null); setCart([]); setCheckout({ nome: '', telefone: '', endereco: '', obs: '', descontoGeral: '' }); };
 
   const openOrderView = (order, backScreen) => {
     setLastOrder(order); setOrderSummaryBack(backScreen); setScreen('orderSummary');
@@ -350,6 +405,7 @@ export default function App() {
     doc.setFontSize(16);
     doc.text(`${titulo} - ${order.storeName}`, 14, y); y += 8;
     doc.setFontSize(10);
+    doc.text(`Nº: ${order.numero || '—'}`, 14, y); y += 6;
     doc.text(`Vendedor: ${order.vendorName}`, 14, y); y += 6;
     doc.text(`Data: ${new Date(order.createdAt).toLocaleString('pt-BR')}`, 14, y); y += 10;
     doc.text(`Cliente: ${order.cliente.nome}`, 14, y); y += 6;
@@ -395,8 +451,11 @@ export default function App() {
   const waLink = (order) => {
     const titulo = order.status === 'pedido' ? 'Pedido' : 'Orçamento';
     const lines = [
-      `*${titulo} - ${order.storeName}*`,
+      `*${titulo} nº ${order.numero || '—'}*`,
+      `Loja: ${order.storeName}`,
       `Vendedor: ${order.vendorName}`,
+      `Valor: ${currency(order.total)}`,
+      '',
       `Cliente: ${order.cliente.nome}${order.cliente.telefone ? ' - ' + order.cliente.telefone : ''}`,
       order.cliente.endereco ? `Endereço: ${order.cliente.endereco}` : null,
       '',
@@ -424,7 +483,7 @@ export default function App() {
     <div className="app-root">
       <style>{STYLES}</style>
       {screen === 'login' && (
-        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }} />
+        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }} />
       )}
       {screen === 'catalog' && currentVendor && (
         <>
@@ -435,13 +494,13 @@ export default function App() {
         </>
       )}
       {screen === 'cart' && (
-        <CartScreen {...{ cartDetailed, setQty: (id, qty) => confirmQuantity(id, qty), setItemDiscount, removeFromCart, cartSubtotal, setScreen }} />
+        <CartScreen {...{ cartDetailed, setQty: (id, qty) => confirmQuantity(id, qty), setItemDiscount, removeFromCart, cartSubtotal, setScreen, editingOrderId, cancelEdit }} />
       )}
       {screen === 'checkout' && (
-        <CheckoutScreen {...{ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen }} />
+        <CheckoutScreen {...{ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen, editingOrderId, cancelEdit }} />
       )}
       {screen === 'orderSummary' && lastOrder && (
-        <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen: orderSummaryBack }} />
+        <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen: orderSummaryBack, onEdit: startEditOrder }} />
       )}
       {screen === 'quotes' && currentVendor && (
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen, onOpenOrder: (o) => openOrderView(o, 'quotes') }} />
@@ -452,8 +511,11 @@ export default function App() {
       {screen === 'repDashboard' && currentRepresentante && (
         <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard') }} />
       )}
+      {screen === 'gerenteDashboard' && currentGerente && (
+        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard') }} />
+      )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -481,7 +543,7 @@ function QuantityModal({ product, initialQty, onConfirm, onClose }) {
   );
 }
 
-function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }) {
+function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError }) {
   return (
     <div className="screen-center">
       <div className="login-card">
@@ -493,6 +555,7 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
         <div className="tabs">
           <button className={loginTab === 'vendor' ? 'tab active' : 'tab'} onClick={() => setLoginTab('vendor')}>Vendedor</button>
           <button className={loginTab === 'rep' ? 'tab active' : 'tab'} onClick={() => setLoginTab('rep')}>Representante</button>
+          <button className={loginTab === 'ger' ? 'tab active' : 'tab'} onClick={() => setLoginTab('ger')}>Gerente</button>
           <button className={loginTab === 'admin' ? 'tab active' : 'tab'} onClick={() => setLoginTab('admin')}>Administração</button>
         </div>
         {loginTab === 'vendor' && (
@@ -530,6 +593,21 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
             </label>
             {loginError && <div className="error">{loginError}</div>}
             <button className="btn-primary" onClick={doRepresentanteLogin}>Entrar</button>
+          </div>
+        )}
+        {loginTab === 'ger' && (
+          <div className="form-stack">
+            <label>Gerente
+              <select value={loginGerId} onChange={e => setLoginGerId(e.target.value)}>
+                <option value="">Selecione seu nome</option>
+                {gerentes.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </label>
+            <label>PIN
+              <input type="password" inputMode="numeric" maxLength={6} value={loginGerPin} onChange={e => setLoginGerPin(e.target.value)} placeholder="••••" />
+            </label>
+            {loginError && <div className="error">{loginError}</div>}
+            <button className="btn-primary" onClick={doGerenteLogin}>Entrar</button>
           </div>
         )}
         {loginTab === 'admin' && (
@@ -616,7 +694,7 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
   );
 }
 
-function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, cartSubtotal, setScreen }) {
+function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, cartSubtotal, setScreen, editingOrderId, cancelEdit }) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -626,6 +704,9 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
         <div className="topbar-title">Carrinho</div>
         <div style={{ width: 34 }} />
       </header>
+      {editingOrderId && (
+        <div className="edit-banner">Editando orçamento existente · <button onClick={() => { cancelEdit(); setScreen('catalog'); }}>Cancelar edição</button></div>
+      )}
       {cartDetailed.length === 0 ? (
         <div className="empty-state">
           <ShoppingCart size={28} /><p>Seu carrinho está vazio.</p>
@@ -656,7 +737,7 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
           </div>
           <div className="cart-summary">
             <div className="cart-total-row"><span>Subtotal</span><strong>{currency(cartSubtotal)}</strong></div>
-            <button className="btn-primary" onClick={() => setScreen('checkout')}>Finalizar orçamento</button>
+            <button className="btn-primary" onClick={() => setScreen('checkout')}>{editingOrderId ? 'Continuar edição' : 'Finalizar orçamento'}</button>
           </div>
         </>
       )}
@@ -664,7 +745,7 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
   );
 }
 
-function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen }) {
+function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen, editingOrderId, cancelEdit }) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -672,6 +753,9 @@ function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPe
         <div className="topbar-title">Dados do cliente</div>
         <button className="icon-btn" onClick={() => setScreen('cart')}><ArrowLeft size={18} /></button>
       </header>
+      {editingOrderId && (
+        <div className="edit-banner">Editando orçamento existente · <button onClick={() => { cancelEdit(); setScreen('catalog'); }}>Cancelar edição</button></div>
+      )}
       <div className="form-stack pad">
         <label>Nome do cliente *
           <input value={checkout.nome} onChange={e => setCheckout({ ...checkout, nome: e.target.value })} placeholder="Nome completo" />
@@ -682,6 +766,7 @@ function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPe
         <label>Endereço de entrega
           <input value={checkout.endereco} onChange={e => setCheckout({ ...checkout, endereco: e.target.value })} placeholder="Opcional" />
         </label>
+        <p className="hint">Telefone e endereço podem ficar em branco por enquanto, mas serão obrigatórios para converter este orçamento em pedido.</p>
         <label>Desconto geral (%)
           <input type="number" min="0" max="100" value={checkout.descontoGeral} onChange={e => setCheckout({ ...checkout, descontoGeral: e.target.value })} placeholder="0" />
         </label>
@@ -692,15 +777,15 @@ function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPe
         {descontoRevendaPercent > 0 && <div className="cart-total-row muted-row"><span>Desconto de revenda ({descontoRevendaPercent}%) — automático</span><span>- {currency(cartSubtotal - afterResale)}</span></div>}
         {generalDiscountPercent > 0 && <div className="cart-total-row muted-row"><span>Desconto geral ({generalDiscountPercent}%)</span><span>- {currency(afterResale - cartTotal)}</span></div>}
         <div className="cart-total-row"><span>Total do orçamento</span><strong>{currency(cartTotal)}</strong></div>
-        <button className="btn-primary" disabled={!checkout.nome.trim()} onClick={salvarOrcamento}>Salvar orçamento</button>
+        <button className="btn-primary" disabled={!checkout.nome.trim()} onClick={salvarOrcamento}>{editingOrderId ? 'Salvar alterações' : 'Salvar orçamento'}</button>
       </div>
     </div>
   );
 }
 
-function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen = 'catalog' }) {
+function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen = 'catalog', onEdit }) {
   const isPedido = order.status === 'pedido';
-  const isVendorFlow = backScreen === 'catalog';
+  const isVendorFlow = backScreen === 'catalog' || backScreen === 'quotes' || backScreen === 'myReport';
   return (
     <div className="screen">
       <header className="topbar no-print">
@@ -710,8 +795,8 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
       </header>
       <div className="printable">
         <div className={isPedido ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{isPedido ? 'Pedido' : 'Orçamento'}</div>
-        <h2>{isPedido ? 'Pedido' : 'Orçamento'} — {order.storeName}</h2>
-        <p className="muted">Vendedor: {order.vendorName} · {new Date(order.createdAt).toLocaleString('pt-BR')}</p>
+        <h2>{isPedido ? 'Pedido' : 'Orçamento'} nº {order.numero || '—'}</h2>
+        <p className="muted">{order.storeName} · Vendedor: {order.vendorName} · {new Date(order.createdAt).toLocaleString('pt-BR')}</p>
         <div className="divider" />
         <p><strong>Cliente:</strong> {order.cliente.nome}</p>
         {order.cliente.telefone && <p><strong>Telefone:</strong> {order.cliente.telefone}</p>}
@@ -738,14 +823,17 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
         {order.cliente.obs && <p><strong>Obs:</strong> {order.cliente.obs}</p>}
       </div>
       <div className="form-stack pad no-print">
+        {!isPedido && isVendorFlow && onEdit && (
+          <button className="btn-secondary" onClick={() => onEdit(order)}>✎ Editar orçamento</button>
+        )}
         {!isPedido && (
-          <button className="btn-secondary" onClick={() => convertToPedido(order.id)}><CheckCircle2 size={16} /> Converter em pedido agora</button>
+          <button className="btn-secondary" onClick={() => { const missing = getMissingFields(order); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(order.id); }}><CheckCircle2 size={16} /> Converter em pedido agora</button>
         )}
         <button className="btn-secondary" disabled={!pdfLibReady} onClick={() => generatePDF(order)}>
           <Printer size={16} /> {pdfLibReady ? 'Baixar PDF' : 'Preparando gerador de PDF…'}
         </button>
         <a className="btn-whatsapp" href={waLink(order)} target="_blank" rel="noopener noreferrer"><MessageCircle size={16} /> Enviar por WhatsApp</a>
-        <button className="btn-primary" onClick={() => setScreen(backScreen)}>{isVendorFlow ? 'Novo orçamento' : 'Voltar'}</button>
+        <button className="btn-primary" onClick={() => setScreen(backScreen)}>{backScreen === 'catalog' ? 'Novo orçamento' : 'Voltar'}</button>
       </div>
     </div>
   );
@@ -764,12 +852,12 @@ function QuotesScreen({ orders, convertToPedido, setScreen, onOpenOrder }) {
         {sorted.map(o => (
           <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
             <div>
-              <div><strong>{o.cliente.nome}</strong></div>
+              <div><strong>{o.cliente.nome}</strong> <span className="muted">nº {o.numero || '—'}</span></div>
               <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')} · {currency(o.total)}</div>
               <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
             </div>
             {o.status === 'orcamento' && (
-              <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
+              <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
             )}
           </div>
         ))}
@@ -870,7 +958,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder }) {
           {filtered.map(o => (
             <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
               <div>
-                <div><strong>{o.cliente.nome}</strong></div>
+                <div><strong>{o.cliente.nome}</strong> <span className="muted">nº {o.numero || '—'}</span></div>
                 <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
                 <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
               </div>
@@ -1025,7 +1113,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
           {detailedFiltered.map(o => (
             <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
               <div>
-                <div><strong>{o.cliente.nome}</strong> — {o.storeName}</div>
+                <div><strong>{o.cliente.nome}</strong> — {o.storeName} <span className="muted">nº {o.numero || '—'}</span></div>
                 <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
                 <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
               </div>
@@ -1049,7 +1137,121 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, products, orders, updateStores, updateVendors, updateRepresentantes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder }) {
+function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder }) {
+  const [period, setPeriod] = useState('mes');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const myStore = stores.find(s => s.id === currentGerente.storeId);
+  const storeOrders = orders.filter(o => o.storeId === currentGerente.storeId && isWithinPeriod(o.createdAt, period, customFrom, customTo) && (!statusFilter || o.status === statusFilter));
+  const pedidos = storeOrders.filter(o => o.status === 'pedido');
+  const orcamentos = storeOrders.filter(o => o.status === 'orcamento');
+  const faturamentoTotal = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalOrcamentoValue = orcamentos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const comissaoLojaTotal = pedidos.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
+
+  const storeVendors = vendors.filter(v => v.storeId === currentGerente.storeId);
+  const porVendedor = storeVendors.map(v => {
+    const os = storeOrders.filter(o => o.vendorId === v.id);
+    const ped = os.filter(o => o.status === 'pedido');
+    const orc = os.filter(o => o.status === 'orcamento');
+    const pedValue = ped.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    const orcValue = orc.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    return { id: v.id, name: v.name, orcCount: orc.length, orcValue, pedCount: ped.length, pedValue };
+  }).sort((a, b) => b.pedValue - a.pedValue);
+  const totOrcCount = porVendedor.reduce((s, v) => s + v.orcCount, 0);
+  const totOrcValue = porVendedor.reduce((s, v) => s + v.orcValue, 0);
+  const totPedCount = porVendedor.reduce((s, v) => s + v.pedCount, 0);
+  const totPedValue = porVendedor.reduce((s, v) => s + v.pedValue, 0);
+
+  const sorted = [...storeOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const buildDoc = () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape' });
+    let y = 20;
+    doc.setFontSize(15);
+    doc.text('Relatório da loja', 14, y); y += 8;
+    doc.setFontSize(9);
+    doc.text(`Loja: ${myStore?.name || ''} · Gerente: ${currentGerente.name}`, 14, y); y += 10;
+    doc.setFontSize(12);
+    doc.text('Por vendedor', 14, y); y += 7;
+    const cols = [
+      { label: 'Vendedor', width: 50, maxChars: 30 },
+      { label: 'Orçam.', width: 40, align: 'right' },
+      { label: 'Pedidos', width: 40, align: 'right' },
+    ];
+    const rows = porVendedor.map(v => [v.name, `${v.orcCount} (${currency(v.orcValue)})`, `${v.pedCount} (${currency(v.pedValue)})`]);
+    y = drawPdfTable(doc, 14, y, cols, rows);
+    y += 4; doc.line(14, y, 14 + cols.reduce((s, c) => s + c.width, 0), y); y += 8;
+    doc.setFontSize(11);
+    doc.text(`Faturamento total (pedidos): ${currency(faturamentoTotal)}`, 14, y); y += 6;
+    doc.text(`Em orçamento: ${currency(totalOrcamentoValue)}`, 14, y); y += 6;
+    doc.text(`Comissão da loja: ${currency(comissaoLojaTotal)}`, 14, y);
+    return doc;
+  };
+
+  return (
+    <div className="screen">
+      <header className="topbar">
+        <div><div className="topbar-title">{myStore?.name}</div><div className="topbar-sub">Gerente: {currentGerente.name}</div></div>
+        <div className="topbar-actions">
+          <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
+        </div>
+      </header>
+      <div className="form-stack pad">
+        <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
+        <label>Status
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="">Todos (orçamentos e pedidos)</option>
+            <option value="orcamento">Só orçamentos</option>
+            <option value="pedido">Só pedidos</option>
+          </select>
+        </label>
+
+        <div className="stats-row">
+          <div className="stat-card"><div className="stat-label">Faturamento (pedidos)</div><div className="stat-value">{currency(faturamentoTotal)}</div></div>
+          <div className="stat-card"><div className="stat-label">Em orçamento</div><div className="stat-value">{currency(totalOrcamentoValue)}</div></div>
+          <div className="stat-card"><div className="stat-label">Comissão da loja</div><div className="stat-value">{currency(comissaoLojaTotal)}</div></div>
+        </div>
+
+        <h3 className="report-heading">Por vendedor</h3>
+        <div className="report-table-wrap">
+          <table className="report-table">
+            <thead><tr><th>Vendedor</th><th>Orçam.</th><th>Pedidos</th></tr></thead>
+            <tbody>
+              {porVendedor.map(v => (
+                <tr key={v.id}><td>{v.name}</td><td>{v.orcCount} · {currency(v.orcValue)}</td><td>{v.pedCount} · {currency(v.pedValue)}</td></tr>
+              ))}
+            </tbody>
+            <tfoot><tr><td><strong>Total</strong></td><td>{totOrcCount} · {currency(totOrcValue)}</td><td>{totPedCount} · {currency(totPedValue)}</td></tr></tfoot>
+          </table>
+          {porVendedor.length === 0 && <p className="hint">Nenhum vendedor cadastrado para esta loja ainda.</p>}
+        </div>
+
+        <h3 className="report-heading">Orçamentos e pedidos</h3>
+        <div className="admin-list">
+          {sorted.map(o => (
+            <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
+              <div>
+                <div><strong>{o.cliente.nome}</strong> — {o.vendorName} <span className="muted">nº {o.numero || '—'}</span></div>
+                <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
+                <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
+              </div>
+              <div className="order-row-values"><span>{currency(o.total)}</span></div>
+            </div>
+          ))}
+          {sorted.length === 0 && <p className="hint">Nenhum registro nesse período.</p>}
+        </div>
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-loja.pdf" />
+      </div>
+    </div>
+  );
+}
+
+function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder }) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -1064,6 +1266,7 @@ function AdminScreen({ stores, vendors, representantes, products, orders, update
         <button className={adminTab === 'lojas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('lojas')}><Store size={14} /> Lojas</button>
         <button className={adminTab === 'vendedores' ? 'tab active' : 'tab'} onClick={() => setAdminTab('vendedores')}><Users size={14} /> Vendedores</button>
         <button className={adminTab === 'representantes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('representantes')}><UserCog size={14} /> Representantes</button>
+        <button className={adminTab === 'gerentes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('gerentes')}><UserCog size={14} /> Gerentes</button>
         <button className={adminTab === 'pedidos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('pedidos')}><Receipt size={14} /> Orçamentos/Pedidos</button>
         <button className={adminTab === 'relatorios' ? 'tab active' : 'tab'} onClick={() => setAdminTab('relatorios')}><BarChart3 size={14} /> Relatórios</button>
         <button className={adminTab === 'config' ? 'tab active' : 'tab'} onClick={() => setAdminTab('config')}><Settings size={14} /> Config</button>
@@ -1073,6 +1276,7 @@ function AdminScreen({ stores, vendors, representantes, products, orders, update
         {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
+        {adminTab === 'gerentes' && <GerentesAdmin gerentes={gerentes} stores={stores} updateGerentes={updateGerentes} />}
         {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} />}
         {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} />}
@@ -1375,6 +1579,53 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
   );
 }
 
+function GerentesAdmin({ gerentes, stores, updateGerentes }) {
+  const empty = { id: null, name: '', storeId: '', pin: '' };
+  const [form, setForm] = useState(empty);
+  const [editingId, setEditingId] = useState(null);
+  const save = () => {
+    if (!form.name.trim() || !form.storeId || !form.pin) return;
+    if (editingId) updateGerentes(current => current.map(g => g.id === editingId ? { ...form, id: editingId } : g));
+    else updateGerentes(current => [...current, { ...form, id: uid() }]);
+    setForm(empty); setEditingId(null);
+  };
+  const edit = (g) => { setForm({ ...g }); setEditingId(g.id); };
+  const remove = (id) => updateGerentes(current => current.filter(g => g.id !== id));
+  return (
+    <div>
+      <div className="admin-form">
+        <p className="hint">O gerente acompanha o desempenho de uma loja específica: faturamento, orçamentos/pedidos e o ranking de vendedores dela.</p>
+        <label>Nome do gerente
+          <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Ana Paula" />
+        </label>
+        <label>Loja
+          <select value={form.storeId} onChange={e => setForm({ ...form, storeId: e.target.value })}>
+            <option value="">Selecione a loja</option>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </label>
+        <label>PIN de acesso
+          <input value={form.pin} onChange={e => setForm({ ...form, pin: e.target.value })} placeholder="Ex: 1234" maxLength={6} />
+        </label>
+        <div className="admin-form-actions">
+          <button className="btn-primary" onClick={save}>{editingId ? 'Salvar alterações' : 'Adicionar gerente'}</button>
+          {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
+        </div>
+      </div>
+      <div className="admin-list">
+        {gerentes.map(g => (
+          <div key={g.id} className="admin-list-item">
+            <div className="admin-list-info"><div>{g.name}</div><div className="muted">{stores.find(s => s.id === g.storeId)?.name || '—'} · PIN {g.pin}</div></div>
+            <button className="icon-btn" onClick={() => edit(g)}>✎</button>
+            <button className="icon-btn" onClick={() => remove(g.id)}><Trash2 size={16} /></button>
+          </div>
+        ))}
+        {gerentes.length === 0 && <p className="hint">Nenhum gerente cadastrado ainda.</p>}
+      </div>
+    </div>
+  );
+}
+
 function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
@@ -1479,7 +1730,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
         {filtered.map(o => (
           <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
             <div>
-              <div><strong>{o.cliente.nome}</strong> — {o.vendorName} ({o.storeName})</div>
+              <div><strong>{o.cliente.nome}</strong> — {o.vendorName} ({o.storeName}) <span className="muted">nº {o.numero || '—'}</span></div>
               <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
               <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
             </div>
@@ -1489,7 +1740,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
               <span className="muted">Vend.: {currency(o.commissionVendorValue)}</span>
               <div style={{ display: 'flex', gap: 6 }}>
                 {o.status === 'orcamento' && (
-                  <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
+                  <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
                 )}
                 <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apagar este ${o.status === 'pedido' ? 'pedido' : 'orçamento'} de ${o.cliente.nome}? Essa ação não pode ser desfeita.`)) deleteOrder(o.id); }}>
                   <Trash2 size={14} />
@@ -1900,6 +2151,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .ranking-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .ranking-row:last-child { border-bottom: none; }
 .pdf-actions { display: flex; flex-direction: column; gap: 8px; }
+.edit-banner { background: #FBEFD9; border-bottom: 1px solid var(--line); padding: 10px 16px; font-size: 13px; color: var(--ink); }
+.edit-banner button { background: none; border: none; text-decoration: underline; color: var(--ink); font-size: 13px; cursor: pointer; padding: 0; }
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
 .modal-card { background: var(--surface); border-radius: 6px; padding: 24px; width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
 .modal-title { font-family: 'Fraunces', serif; font-size: 16px; font-weight: 600; }
