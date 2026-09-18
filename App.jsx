@@ -553,7 +553,7 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
           <h1>Catálogo de Revestimentos</h1>
           <p>Acesso para consultores de vendas</p>
         </div>
-        <div className="tabs">
+        <div className="tabs login-tabs">
           <button className={loginTab === 'vendor' ? 'tab active' : 'tab'} onClick={() => switchTab('vendor')}>Vendedor</button>
           <button className={loginTab === 'rep' ? 'tab active' : 'tab'} onClick={() => switchTab('rep')}>Representante</button>
           <button className={loginTab === 'ger' ? 'tab active' : 'tab'} onClick={() => switchTab('ger')}>Gerente</button>
@@ -2042,6 +2042,8 @@ h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .login-header p { margin: 6px 0 0; color: var(--ink-soft); font-size: 14px; }
 .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
 .tabs.wrap { flex-wrap: wrap; padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.tabs.login-tabs { flex-wrap: wrap; }
+.tabs.login-tabs .tab { padding: 8px 10px; font-size: 12px; }
 .tab { flex: none; background: none; border: none; padding: 10px 14px; font-size: 13px; font-weight: 500; color: var(--ink-soft); cursor: pointer; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px; }
 .tab.active { color: var(--ink); border-bottom-color: var(--clay); }
 .form-stack { display: flex; flex-direction: column; gap: 14px; }
