@@ -1027,14 +1027,10 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
 
-  const filtered = orders.filter(o => isWithinPeriod(o.createdAt, period, customFrom, customTo) && (!statusFilter || o.status === statusFilter))
+  const pedidos = orders.filter(o => o.status === 'pedido' && isWithinPeriod(o.createdAt, period, customFrom, customTo))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-  const orcamentos = filtered.filter(o => o.status === 'orcamento');
-  const pedidos = filtered.filter(o => o.status === 'pedido');
-  const totalOrcamentos = orcamentos.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const totalPedidos = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const totalComissao = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
 
@@ -1045,22 +1041,20 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
     doc.setFontSize(15);
     doc.text('Meu relatório de vendas', 14, y); y += 8;
     doc.setFontSize(9);
-    doc.text(`Orçamentos: ${orcamentos.length} (${currency(totalOrcamentos)}) · Pedidos: ${pedidos.length} (${currency(totalPedidos)})`, 14, y); y += 10;
+    doc.text(`Período: ${periodLabel(period, customFrom, customTo)} · Pedidos: ${pedidos.length} (${currency(totalPedidos)})`, 14, y); y += 10;
     const cols = [
-      { label: 'Data', width: 26 },
-      { label: 'Cliente', width: 60, maxChars: 32 },
-      { label: 'Status', width: 26 },
-      { label: 'Total', width: 34, align: 'right' },
-      { label: 'Comissão', width: 34, align: 'right' },
+      { label: 'Data', width: 30 },
+      { label: 'Cliente', width: 70, maxChars: 36 },
+      { label: 'Total', width: 40, align: 'right' },
+      { label: 'Comissão', width: 40, align: 'right' },
     ];
-    const rows = filtered.map(o => [
-      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.cliente.nome, o.status === 'pedido' ? 'Pedido' : 'Orçamento',
-      currency(o.total), o.status === 'pedido' ? currency(o.commissionVendorValue) : '—',
+    const rows = pedidos.map(o => [
+      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.cliente.nome, currency(o.total), currency(o.commissionVendorValue),
     ]);
     y = drawPdfTable(doc, 14, y, cols, rows);
     y += 4; doc.line(14, y, 194, y); y += 8;
     doc.setFontSize(11);
-    doc.text(`Total em vendas: ${currency(totalOrcamentos + totalPedidos)}`, 14, y); y += 6;
+    doc.text(`Total em vendas: ${currency(totalPedidos)}`, 14, y); y += 6;
     doc.text(`Total de comissão: ${currency(totalComissao)}`, 14, y);
     return doc;
   };
@@ -1074,39 +1068,30 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
       </header>
       <div className="form-stack pad">
         <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
-        <label>Status
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">Todos (orçamentos e pedidos)</option>
-            <option value="orcamento">Só orçamentos</option>
-            <option value="pedido">Só pedidos</option>
-          </select>
-        </label>
 
         <div className="stats-row">
-          <div className="stat-card"><div className="stat-label">Orçamentos</div><div className="stat-value">{orcamentos.length} · {currency(totalOrcamentos)}</div></div>
           <div className="stat-card"><div className="stat-label">Pedidos</div><div className="stat-value">{pedidos.length} · {currency(totalPedidos)}</div></div>
           <div className="stat-card"><div className="stat-label">Minha comissão</div><div className="stat-value">{currency(totalComissao)}</div></div>
         </div>
 
         <div className="admin-list">
-          {filtered.map(o => (
+          {pedidos.map(o => (
             <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
               <div>
                 <div><strong>{o.cliente.nome}</strong> <span className="muted">nº {o.numero || '—'}</span></div>
                 <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
-                <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
               </div>
               <div className="order-row-values">
                 <span>{currency(o.total)}</span>
-                {o.status === 'pedido' && <span className="muted">Comissão: {currency(o.commissionVendorValue)}</span>}
+                <span className="muted">Comissão: {currency(o.commissionVendorValue)}</span>
               </div>
             </div>
           ))}
-          {filtered.length === 0 && <p className="hint">Nenhum registro nesse período.</p>}
+          {pedidos.length === 0 && <p className="hint">Nenhum pedido nesse período.</p>}
         </div>
-        {filtered.length > 0 && (
+        {pedidos.length > 0 && (
           <div className="stat-card total-footer">
-            <strong>Total do período:</strong> {currency(totalOrcamentos + totalPedidos)} em vendas · {currency(totalComissao)} de comissão
+            <strong>Total do período:</strong> {currency(totalPedidos)} em vendas · {currency(totalComissao)} de comissão
           </div>
         )}
         <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="meu-relatorio-vendas.pdf" />
@@ -1119,34 +1104,27 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
   const [storeFilter, setStoreFilter] = useState('');
   const [expandedStoreId, setExpandedStoreId] = useState(null);
 
   const myStores = stores.filter(s => s.representanteId === currentRepresentante.id);
   const myStoreIds = myStores.map(s => s.id);
-  const filtered = orders.filter(o => myStoreIds.includes(o.storeId) && isWithinPeriod(o.createdAt, period, customFrom, customTo) && (!statusFilter || o.status === statusFilter));
+  const filtered = orders.filter(o => o.status === 'pedido' && myStoreIds.includes(o.storeId) && isWithinPeriod(o.createdAt, period, customFrom, customTo));
   const detailedFiltered = filtered.filter(o => !storeFilter || o.storeId === storeFilter).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  const pedidosGeral = filtered.filter(o => o.status === 'pedido');
-  const totalComissaoGeral = pedidosGeral.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
+  const totalComissaoGeral = filtered.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
 
   const porLoja = myStores.map(s => {
-    const os = filtered.filter(o => o.storeId === s.id);
-    const pedidos = os.filter(o => o.status === 'pedido');
-    const orcCount = os.filter(o => o.status === 'orcamento').length;
-    const orcValue = os.filter(o => o.status === 'orcamento').reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const pedidos = filtered.filter(o => o.storeId === s.id);
     const pedValue = pedidos.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
     const comissao = pedidos.reduce((sum, o) => sum + (Number(o.commissionRepresentanteValue) || 0), 0);
-    return { id: s.id, name: s.name, orcCount, orcValue, pedCount: pedidos.length, pedValue, comissao };
+    return { id: s.id, name: s.name, pedCount: pedidos.length, pedValue, comissao };
   });
-  const totalOrcCount = porLoja.reduce((s, l) => s + l.orcCount, 0);
-  const totalOrcValue = porLoja.reduce((s, l) => s + l.orcValue, 0);
   const totalPedCount = porLoja.reduce((s, l) => s + l.pedCount, 0);
   const totalPedValue = porLoja.reduce((s, l) => s + l.pedValue, 0);
 
   const detFaturamento = detailedFiltered.reduce((s, o) => s + (Number(o.total) || 0), 0);
-  const detComissaoLoja = detailedFiltered.filter(o => o.status === 'pedido').reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
-  const detComissaoRep = detailedFiltered.filter(o => o.status === 'pedido').reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
+  const detComissaoLoja = detailedFiltered.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
+  const detComissaoRep = detailedFiltered.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
@@ -1156,19 +1134,18 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
     doc.text('Relatório do representante', 14, y); y += 8;
     doc.setFontSize(9);
     const storeLabel = storeFilter ? (myStores.find(s => s.id === storeFilter)?.name || '') : 'Todas as lojas';
-    doc.text(`Representante: ${currentRepresentante.name} · Loja: ${storeLabel}`, 14, y); y += 10;
+    doc.text(`Representante: ${currentRepresentante.name} · Loja: ${storeLabel} · Período: ${periodLabel(period, customFrom, customTo)}`, 14, y); y += 10;
     const cols = [
-      { label: 'Data', width: 24 },
-      { label: 'Loja', width: 44, maxChars: 26 },
-      { label: 'Cliente', width: 44, maxChars: 26 },
-      { label: 'Status', width: 26 },
-      { label: 'Total', width: 34, align: 'right' },
-      { label: 'C. loja', width: 34, align: 'right' },
-      { label: 'C. repr.', width: 34, align: 'right' },
+      { label: 'Data', width: 26 },
+      { label: 'Loja', width: 50, maxChars: 30 },
+      { label: 'Cliente', width: 50, maxChars: 30 },
+      { label: 'Total', width: 36, align: 'right' },
+      { label: 'C. loja', width: 36, align: 'right' },
+      { label: 'C. repr.', width: 36, align: 'right' },
     ];
     const rows = detailedFiltered.map(o => [
-      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.storeName, o.cliente.nome, o.status === 'pedido' ? 'Pedido' : 'Orçamento',
-      currency(o.total), o.status === 'pedido' ? currency(o.commissionStoreValue) : '—', o.status === 'pedido' ? currency(o.commissionRepresentanteValue) : '—',
+      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.storeName, o.cliente.nome,
+      currency(o.total), currency(o.commissionStoreValue), currency(o.commissionRepresentanteValue),
     ]);
     y = drawPdfTable(doc, 14, y, cols, rows);
     y += 4; doc.line(14, y, 14 + cols.reduce((s, c) => s + c.width, 0), y); y += 8;
@@ -1190,13 +1167,6 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
       </header>
       <div className="form-stack pad">
         <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
-        <label>Status
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">Todos (orçamentos e pedidos)</option>
-            <option value="orcamento">Só orçamentos</option>
-            <option value="pedido">Só pedidos</option>
-          </select>
-        </label>
         <label>Loja
           <select value={storeFilter} onChange={e => setStoreFilter(e.target.value)}>
             <option value="">Todas as lojas que atendo</option>
@@ -1206,7 +1176,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
 
         <div className="stats-row">
           <div className="stat-card"><div className="stat-label">Lojas atendidas</div><div className="stat-value">{myStores.length}</div></div>
-          <div className="stat-card"><div className="stat-label">Pedidos convertidos</div><div className="stat-value">{pedidosGeral.length}</div></div>
+          <div className="stat-card"><div className="stat-label">Pedidos convertidos</div><div className="stat-value">{filtered.length}</div></div>
           <div className="stat-card"><div className="stat-label">Minha comissão total</div><div className="stat-value">{currency(totalComissaoGeral)}</div></div>
         </div>
 
@@ -1215,7 +1185,6 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
           {porLoja.map(l => (
             <div key={l.id} className="report-card">
               <div className="report-card-title">{l.name}</div>
-              <div className="report-card-row"><span className="label">Orçamentos</span><span>{l.orcCount} · {currency(l.orcValue)}</span></div>
               <div className="report-card-row"><span className="label">Pedidos</span><span>{l.pedCount} · {currency(l.pedValue)}</span></div>
               <div className="report-card-row"><span className="label">Comissão</span><span>{currency(l.comissao)}</span></div>
               <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => setExpandedStoreId(expandedStoreId === l.id ? null : l.id)}><TrendingUp size={13} /> Ranking</button>
@@ -1223,7 +1192,6 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
           ))}
           {porLoja.length > 0 && (
             <div className="report-card footer">
-              <div className="report-card-row"><span className="label">Total orçamentos</span><span>{totalOrcCount} · {currency(totalOrcValue)}</span></div>
               <div className="report-card-row"><span className="label">Total pedidos</span><span>{totalPedCount} · {currency(totalPedValue)}</span></div>
               <div className="report-card-row"><span className="label">Comissão total</span><span>{currency(totalComissaoGeral)}</span></div>
             </div>
@@ -1241,23 +1209,22 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
           </div>
         )}
 
-        <h3 className="report-heading">Orçamentos e pedidos {storeFilter ? `— ${myStores.find(s => s.id === storeFilter)?.name}` : '(todas as lojas)'}</h3>
+        <h3 className="report-heading">Pedidos {storeFilter ? `— ${myStores.find(s => s.id === storeFilter)?.name}` : '(todas as lojas)'}</h3>
         <div className="admin-list">
           {detailedFiltered.map(o => (
             <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
               <div>
                 <div><strong>{o.cliente.nome}</strong> — {o.storeName} <span className="muted">nº {o.numero || '—'}</span></div>
                 <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
-                <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
               </div>
               <div className="order-row-values">
                 <span>{currency(o.total)}</span>
-                {o.status === 'pedido' && <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>}
-                {o.status === 'pedido' && <span className="muted">Minha: {currency(o.commissionRepresentanteValue)}</span>}
+                <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
+                <span className="muted">Minha: {currency(o.commissionRepresentanteValue)}</span>
               </div>
             </div>
           ))}
-          {detailedFiltered.length === 0 && <p className="hint">Nenhum registro para esse filtro.</p>}
+          {detailedFiltered.length === 0 && <p className="hint">Nenhum pedido para esse filtro.</p>}
         </div>
         {detailedFiltered.length > 0 && (
           <div className="stat-card total-footer">
@@ -1274,31 +1241,22 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
 
   const myStore = stores.find(s => s.id === currentGerente.storeId);
-  const storeOrders = orders.filter(o => o.storeId === currentGerente.storeId && isWithinPeriod(o.createdAt, period, customFrom, customTo) && (!statusFilter || o.status === statusFilter));
-  const pedidos = storeOrders.filter(o => o.status === 'pedido');
-  const orcamentos = storeOrders.filter(o => o.status === 'orcamento');
+  const pedidos = orders.filter(o => o.status === 'pedido' && o.storeId === currentGerente.storeId && isWithinPeriod(o.createdAt, period, customFrom, customTo));
   const faturamentoTotal = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
-  const totalOrcamentoValue = orcamentos.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const comissaoLojaTotal = pedidos.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
 
   const storeVendors = vendors.filter(v => v.storeId === currentGerente.storeId);
   const porVendedor = storeVendors.map(v => {
-    const os = storeOrders.filter(o => o.vendorId === v.id);
-    const ped = os.filter(o => o.status === 'pedido');
-    const orc = os.filter(o => o.status === 'orcamento');
+    const ped = pedidos.filter(o => o.vendorId === v.id);
     const pedValue = ped.reduce((s, o) => s + (Number(o.total) || 0), 0);
-    const orcValue = orc.reduce((s, o) => s + (Number(o.total) || 0), 0);
-    return { id: v.id, name: v.name, orcCount: orc.length, orcValue, pedCount: ped.length, pedValue };
+    return { id: v.id, name: v.name, pedCount: ped.length, pedValue };
   }).sort((a, b) => b.pedValue - a.pedValue);
-  const totOrcCount = porVendedor.reduce((s, v) => s + v.orcCount, 0);
-  const totOrcValue = porVendedor.reduce((s, v) => s + v.orcValue, 0);
   const totPedCount = porVendedor.reduce((s, v) => s + v.pedCount, 0);
   const totPedValue = porVendedor.reduce((s, v) => s + v.pedValue, 0);
 
-  const sorted = [...storeOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const sorted = [...pedidos].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
@@ -1307,20 +1265,18 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
     doc.setFontSize(15);
     doc.text('Relatório da loja', 14, y); y += 8;
     doc.setFontSize(9);
-    doc.text(`Loja: ${myStore?.name || ''} · Gerente: ${currentGerente.name}`, 14, y); y += 10;
+    doc.text(`Loja: ${myStore?.name || ''} · Gerente: ${currentGerente.name} · Período: ${periodLabel(period, customFrom, customTo)}`, 14, y); y += 10;
     doc.setFontSize(12);
     doc.text('Por vendedor', 14, y); y += 7;
     const cols = [
-      { label: 'Vendedor', width: 50, maxChars: 30 },
-      { label: 'Orçam.', width: 40, align: 'right' },
-      { label: 'Pedidos', width: 40, align: 'right' },
+      { label: 'Vendedor', width: 60, maxChars: 34 },
+      { label: 'Pedidos', width: 50, align: 'right' },
     ];
-    const rows = porVendedor.map(v => [v.name, `${v.orcCount} (${currency(v.orcValue)})`, `${v.pedCount} (${currency(v.pedValue)})`]);
+    const rows = porVendedor.map(v => [v.name, `${v.pedCount} (${currency(v.pedValue)})`]);
     y = drawPdfTable(doc, 14, y, cols, rows);
     y += 4; doc.line(14, y, 14 + cols.reduce((s, c) => s + c.width, 0), y); y += 8;
     doc.setFontSize(11);
-    doc.text(`Faturamento total (pedidos): ${currency(faturamentoTotal)}`, 14, y); y += 6;
-    doc.text(`Em orçamento: ${currency(totalOrcamentoValue)}`, 14, y); y += 6;
+    doc.text(`Faturamento total: ${currency(faturamentoTotal)}`, 14, y); y += 6;
     doc.text(`Comissão da loja: ${currency(comissaoLojaTotal)}`, 14, y);
     return doc;
   };
@@ -1336,17 +1292,9 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
       </header>
       <div className="form-stack pad">
         <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
-        <label>Status
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">Todos (orçamentos e pedidos)</option>
-            <option value="orcamento">Só orçamentos</option>
-            <option value="pedido">Só pedidos</option>
-          </select>
-        </label>
 
         <div className="stats-row">
-          <div className="stat-card"><div className="stat-label">Faturamento (pedidos)</div><div className="stat-value">{currency(faturamentoTotal)}</div></div>
-          <div className="stat-card"><div className="stat-label">Em orçamento</div><div className="stat-value">{currency(totalOrcamentoValue)}</div></div>
+          <div className="stat-card"><div className="stat-label">Faturamento</div><div className="stat-value">{currency(faturamentoTotal)}</div></div>
           <div className="stat-card"><div className="stat-label">Comissão da loja</div><div className="stat-value">{currency(comissaoLojaTotal)}</div></div>
         </div>
 
@@ -1355,32 +1303,29 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
           {porVendedor.map(v => (
             <div key={v.id} className="report-card">
               <div className="report-card-title">{v.name}</div>
-              <div className="report-card-row"><span className="label">Orçamentos</span><span>{v.orcCount} · {currency(v.orcValue)}</span></div>
               <div className="report-card-row"><span className="label">Pedidos</span><span>{v.pedCount} · {currency(v.pedValue)}</span></div>
             </div>
           ))}
           {porVendedor.length > 0 && (
             <div className="report-card footer">
-              <div className="report-card-row"><span className="label">Total orçamentos</span><span>{totOrcCount} · {currency(totOrcValue)}</span></div>
               <div className="report-card-row"><span className="label">Total pedidos</span><span>{totPedCount} · {currency(totPedValue)}</span></div>
             </div>
           )}
           {porVendedor.length === 0 && <p className="hint">Nenhum vendedor cadastrado para esta loja ainda.</p>}
         </div>
 
-        <h3 className="report-heading">Orçamentos e pedidos</h3>
+        <h3 className="report-heading">Pedidos</h3>
         <div className="admin-list">
           {sorted.map(o => (
             <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
               <div>
                 <div><strong>{o.cliente.nome}</strong> — {o.vendorName} <span className="muted">nº {o.numero || '—'}</span></div>
                 <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
-                <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
               </div>
               <div className="order-row-values"><span>{currency(o.total)}</span></div>
             </div>
           ))}
-          {sorted.length === 0 && <p className="hint">Nenhum registro nesse período.</p>}
+          {sorted.length === 0 && <p className="hint">Nenhum pedido nesse período.</p>}
         </div>
         <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-loja.pdf" />
       </div>
