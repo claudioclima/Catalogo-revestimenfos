@@ -174,6 +174,14 @@ function drawPdfTable(doc, x0, y0, columns, rows) {
   return y;
 }
 
+function periodLabel(period, customFrom, customTo) {
+  if (period === 'dia') return 'Hoje';
+  if (period === 'semana') return 'Esta semana';
+  if (period === 'mes') return 'Este mês';
+  if (period === 'periodo') return `${customFrom || 'início'} até ${customTo || 'hoje'}`;
+  return 'Todo o histórico';
+}
+
 function vendorRanking(storeId, orders, vendors) {
   return vendors.filter(v => v.storeId === storeId).map(v => {
     const pedidos = orders.filter(o => o.vendorId === v.id && o.storeId === storeId && o.status === 'pedido');
@@ -595,6 +603,9 @@ export default function App() {
       {screen === 'quotes' && currentVendor && (
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen, onOpenOrder: (o) => openOrderView(o, 'quotes') }} />
       )}
+      {screen === 'myOrders' && currentVendor && (
+        <MyOrdersScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, onOpenOrder: (o) => openOrderView(o, 'myOrders') }} />
+      )}
       {screen === 'myReport' && currentVendor && (
         <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'myReport'), branding }} />
       )}
@@ -741,6 +752,7 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
           <button className="icon-btn" onClick={refreshAll} title="Atualizar catálogo" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
           <button className="icon-btn" onClick={() => setScreen('myReport')} title="Meu relatório de vendas"><BarChart3 size={18} /></button>
           <button className="icon-btn" onClick={() => setScreen('quotes')} title="Meus orçamentos"><FileText size={18} /></button>
+          <button className="icon-btn" onClick={() => setScreen('myOrders')} title="Meus pedidos"><Receipt size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
           <button className="cart-btn" onClick={() => setScreen('cart')}>
             <ShoppingCart size={18} />
@@ -938,7 +950,7 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
 }
 
 function QuotesScreen({ orders, convertToPedido, setScreen, onOpenOrder }) {
-  const sorted = [...orders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const sorted = [...orders].filter(o => o.status === 'orcamento').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return (
     <div className="screen">
       <header className="topbar">
@@ -952,14 +964,38 @@ function QuotesScreen({ orders, convertToPedido, setScreen, onOpenOrder }) {
             <div>
               <div><strong>{o.cliente.nome}</strong> <span className="muted">nº {o.numero || '—'}</span></div>
               <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')} · {currency(o.total)}</div>
-              <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
+              <span className="status-badge status-orcamento">Orçamento</span>
             </div>
-            {o.status === 'orcamento' && (
-              <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
-            )}
+            <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
           </div>
         ))}
-        {sorted.length === 0 && <p className="hint">Você ainda não tem orçamentos salvos.</p>}
+        {sorted.length === 0 && <p className="hint">Você não tem orçamentos pendentes agora.</p>}
+      </div>
+    </div>
+  );
+}
+
+function MyOrdersScreen({ orders, setScreen, onOpenOrder }) {
+  const sorted = [...orders].filter(o => o.status === 'pedido').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return (
+    <div className="screen">
+      <header className="topbar">
+        <button className="icon-btn" onClick={() => setScreen('catalog')} title="Início"><Home size={18} /></button>
+        <div className="topbar-title">Meus pedidos</div>
+        <div style={{ width: 34 }} />
+      </header>
+      <div className="admin-list pad">
+        {sorted.map(o => (
+          <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
+            <div>
+              <div><strong>{o.cliente.nome}</strong> <span className="muted">nº {o.numero || '—'}</span></div>
+              <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')} · {currency(o.total)}</div>
+              <span className="status-badge status-pedido">Pedido</span>
+            </div>
+            <span className="muted">Comissão: {currency(o.commissionVendorValue)}</span>
+          </div>
+        ))}
+        {sorted.length === 0 && <p className="hint">Você ainda não tem pedidos confirmados.</p>}
       </div>
     </div>
   );
@@ -1733,8 +1769,9 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [period, setPeriod] = useState('todos');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
 
   const vendorOptions = filterStore ? vendors.filter(v => v.storeId === filterStore) : vendors;
 
@@ -1742,9 +1779,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
     if (filterStore && o.storeId !== filterStore) return false;
     if (filterVendor && o.vendorId !== filterVendor) return false;
     if (filterStatus && o.status !== filterStatus) return false;
-    const d = o.createdAt.slice(0, 10);
-    if (dateFrom && d < dateFrom) return false;
-    if (dateTo && d > dateTo) return false;
+    if (!isWithinPeriod(o.createdAt, period, customFrom, customTo)) return false;
     return true;
   });
 
@@ -1766,7 +1801,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
     const vendorName = filterVendor ? (vendors.find(v => v.id === filterVendor)?.name || '') : 'Todos os vendedores';
     doc.text(`Loja: ${storeName}`, 14, y); y += 5;
     doc.text(`Vendedor: ${vendorName}`, 14, y); y += 5;
-    doc.text(`Período: ${dateFrom || 'início'} até ${dateTo || 'hoje'}`, 14, y); y += 10;
+    doc.text(`Período: ${periodLabel(period, customFrom, customTo)}`, 14, y); y += 10;
     const cols = [
       { label: 'Data', width: 24 },
       { label: 'Cliente', width: 44, maxChars: 26 },
@@ -1812,14 +1847,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
             <option value="pedido">Só pedidos</option>
           </select>
         </label>
-        <div className="admin-form-actions" style={{ gap: 12 }}>
-          <label style={{ flex: 1 }}>De
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-          </label>
-          <label style={{ flex: 1 }}>Até
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-          </label>
-        </div>
+        <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
         <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-comissoes.pdf" />
       </div>
 
@@ -1862,8 +1890,9 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady,
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterRepresentante, setFilterRepresentante] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [period, setPeriod] = useState('todos');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [expandedStoreId, setExpandedStoreId] = useState(null);
 
   const vendorOptions = filterStore ? vendors.filter(v => v.storeId === filterStore) : vendors;
@@ -1871,9 +1900,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady,
   const filteredOrders = orders.filter(o => {
     if (filterStore && o.storeId !== filterStore) return false;
     if (filterVendor && o.vendorId !== filterVendor) return false;
-    const d = o.createdAt.slice(0, 10);
-    if (dateFrom && d < dateFrom) return false;
-    if (dateTo && d > dateTo) return false;
+    if (!isWithinPeriod(o.createdAt, period, customFrom, customTo)) return false;
     return true;
   });
 
@@ -1938,7 +1965,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady,
     const storeName = filterStore ? (stores.find(s => s.id === filterStore)?.name || '') : 'Todas as lojas';
     const vendorName = filterVendor ? (vendors.find(v => v.id === filterVendor)?.name || '') : 'Todos os vendedores';
     doc.text(`Loja: ${storeName} · Vendedor: ${vendorName}`, 14, y); y += 5;
-    doc.text(`Período: ${dateFrom || 'início'} até ${dateTo || 'hoje'}`, 14, y); y += 10;
+    doc.text(`Período: ${periodLabel(period, customFrom, customTo)}`, 14, y); y += 10;
 
     doc.setFontSize(12);
     doc.text('Por vendedor', 14, y); y += 7;
@@ -2012,14 +2039,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady,
             {(filterStore ? representantes.filter(r => r.id === stores.find(s => s.id === filterStore)?.representanteId) : representantes).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
         </label>
-        <div className="admin-form-actions" style={{ gap: 12 }}>
-          <label style={{ flex: 1 }}>De
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-          </label>
-          <label style={{ flex: 1 }}>Até
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-          </label>
-        </div>
+        <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
         <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-desempenho.pdf" />
       </div>
 
