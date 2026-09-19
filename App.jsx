@@ -29,6 +29,54 @@ function resizeImage(file, maxW = 640, quality = 0.72) {
   });
 }
 
+function resizeLogo(file, maxW = 400, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxW / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve({ dataUrl: canvas.toDataURL('image/png', quality), width: canvas.width, height: canvas.height });
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function addLetterhead(doc, branding) {
+  let y = 20;
+  if (branding?.logo) {
+    const maxW = 28;
+    const ratio = (branding.logoW && branding.logoH) ? (branding.logoH / branding.logoW) : 1;
+    const w = maxW;
+    const h = Math.min(22, maxW * ratio);
+    try { doc.addImage(branding.logo, 'PNG', 14, 10, w, h); } catch (e) { /* ignore malformed image */ }
+    y = Math.max(y, 12 + h + 8);
+    if (branding.companyName) {
+      doc.setFontSize(9);
+      doc.setTextColor(110);
+      doc.text(branding.companyName, 14 + w + 6, 10 + h / 2 + 3);
+      doc.setTextColor(0);
+    }
+    doc.setDrawColor(220);
+    doc.line(14, y - 4, doc.internal.pageSize.getWidth() - 14, y - 4);
+    doc.setDrawColor(0);
+  } else if (branding?.companyName) {
+    doc.setFontSize(11);
+    doc.text(branding.companyName, 14, 16);
+    y = 24;
+  }
+  return y;
+}
+
 function itemPackagingInfo(item) {
   const pesoTotal = item.peso ? Number(item.peso) * item.qty : null;
   const embalagensNecessarias = item.qtdEmbalagem ? Math.ceil(item.qty / Number(item.qtdEmbalagem)) : null;
@@ -170,7 +218,7 @@ function ReportPdfButtons({ pdfLibReady, buildDoc, filename }) {
   );
 }
 
-const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin' };
+const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding' };
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -183,6 +231,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [adminPin, setAdminPin] = useState('1234');
+  const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, companyName: '' });
 
   const [screen, setScreen] = useState('login');
   const [loginTab, setLoginTab] = useState('vendor');
@@ -216,15 +265,33 @@ export default function App() {
     } catch { return fallback; }
   };
 
+  const loadProducts = async () => {
+    const ids = await loadKey('productIndex', null);
+    if (ids === null) {
+      // Primeira vez com o novo formato: migra os produtos que já existiam na gaveta única.
+      const legacy = await loadKey(STORAGE_KEYS.products, []);
+      if (legacy.length) {
+        const newIds = legacy.map(p => p.id);
+        await Promise.all(legacy.map(p => storage.set(`product:${p.id}`, JSON.stringify(p)).catch(() => {})));
+        await storage.set('productIndex', JSON.stringify(newIds)).catch(() => {});
+        return legacy;
+      }
+      await storage.set('productIndex', JSON.stringify([])).catch(() => {});
+      return [];
+    }
+    const results = await Promise.all(ids.map(id => loadKey(`product:${id}`, null)));
+    return results.filter(Boolean);
+  };
+
   const refreshAll = async () => {
     setRefreshing(true);
-    const [s, v, rep, ger, p, o, pin] = await Promise.all([
+    const [s, v, rep, ger, p, o, pin, br] = await Promise.all([
       loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
-      loadKey(STORAGE_KEYS.products, []), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'),
+      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, companyName: '' }),
     ]);
-    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin);
+    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br);
     setRefreshing(false);
-    return { s, v, rep, ger, p, o, pin };
+    return { s, v, rep, ger, p, o, pin, br };
   };
 
   useEffect(() => {
@@ -261,9 +328,25 @@ export default function App() {
   const mutateVendors = (updater) => mutate(STORAGE_KEYS.vendors, updater, setVendors);
   const mutateRepresentantes = (updater) => mutate(STORAGE_KEYS.representantes, updater, setRepresentantes);
   const mutateGerentes = (updater) => mutate(STORAGE_KEYS.gerentes, updater, setGerentes);
-  const mutateProducts = (updater) => mutate(STORAGE_KEYS.products, updater, setProducts);
+  const saveProduct = async (product) => {
+    try { await storage.set(`product:${product.id}`, JSON.stringify(product)); } catch (e) { console.error(e); }
+    const idx = await loadKey('productIndex', []);
+    if (!idx.includes(product.id)) {
+      try { await storage.set('productIndex', JSON.stringify([...idx, product.id])); } catch (e) { console.error(e); }
+    }
+    setProducts(current => {
+      const exists = current.some(p => p.id === product.id);
+      return exists ? current.map(p => p.id === product.id ? product : p) : [...current, product];
+    });
+  };
+  const deleteProductById = async (id) => {
+    const idx = await loadKey('productIndex', []);
+    try { await storage.set('productIndex', JSON.stringify(idx.filter(x => x !== id))); } catch (e) { console.error(e); }
+    setProducts(current => current.filter(p => p.id !== id));
+  };
   const mutateOrders = (updater) => mutate(STORAGE_KEYS.orders, updater, setOrders);
   const mutateAdminPin = (pin) => { setAdminPin(pin); storage.set(STORAGE_KEYS.adminPin, JSON.stringify(pin)).catch(() => {}); };
+  const updateBranding = (next) => { setBranding(next); storage.set(STORAGE_KEYS.branding, JSON.stringify(next)).catch(() => {}); };
 
   const storeVendors = useMemo(() => vendors.filter(v => v.storeId === loginStoreId), [vendors, loginStoreId]);
 
@@ -404,7 +487,7 @@ export default function App() {
     if (!window.jspdf) return;
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
-    let y = 20;
+    let y = addLetterhead(doc, branding);
     const titulo = order.status === 'pedido' ? 'Pedido' : 'Orçamento';
     doc.setFontSize(16);
     doc.text(`${titulo} - ${order.storeName}`, 14, y); y += 8;
@@ -490,7 +573,7 @@ export default function App() {
     <div className="app-root">
       <style>{STYLES}</style>
       {screen === 'login' && (
-        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError }} />
+        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }} />
       )}
       {screen === 'catalog' && currentVendor && (
         <>
@@ -513,16 +596,16 @@ export default function App() {
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen, onOpenOrder: (o) => openOrderView(o, 'quotes') }} />
       )}
       {screen === 'myReport' && currentVendor && (
-        <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'myReport') }} />
+        <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'myReport'), branding }} />
       )}
       {screen === 'repDashboard' && currentRepresentante && (
-        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard') }} />
+        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding }} />
       )}
       {screen === 'gerenteDashboard' && currentGerente && (
-        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard') }} />
+        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard'), branding }} />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateProducts: mutateProducts, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -550,13 +633,13 @@ function QuantityModal({ product, initialQty, onConfirm, onClose }) {
   );
 }
 
-function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError }) {
+function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }) {
   const switchTab = (tab) => { setLoginTab(tab); setLoginError(''); };
   return (
     <div className="screen-center">
       <div className="login-card">
         <div className="login-header">
-          <div className="tile-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          {branding?.logo ? <img src={branding.logo} alt="" className="login-logo" /> : <div className="tile-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>}
           <h1>Catálogo de Revestimentos</h1>
           <p>Acesso para consultores de vendas</p>
         </div>
@@ -904,7 +987,7 @@ function PeriodFilter({ period, setPeriod, customFrom, setCustomFrom, customTo, 
   );
 }
 
-function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder }) {
+function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -922,7 +1005,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder }) {
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
-    let y = 20;
+    let y = addLetterhead(doc, branding);
     doc.setFontSize(15);
     doc.text('Meu relatório de vendas', 14, y); y += 8;
     doc.setFontSize(9);
@@ -996,7 +1079,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder }) {
   );
 }
 
-function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder }) {
+function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1032,7 +1115,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape' });
-    let y = 20;
+    let y = addLetterhead(doc, branding);
     doc.setFontSize(15);
     doc.text('Relatório do representante', 14, y); y += 8;
     doc.setFontSize(9);
@@ -1151,7 +1234,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   );
 }
 
-function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder }) {
+function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1184,7 +1267,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape' });
-    let y = 20;
+    let y = addLetterhead(doc, branding);
     doc.setFontSize(15);
     doc.text('Relatório da loja', 14, y); y += 8;
     doc.setFontSize(9);
@@ -1269,7 +1352,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateProducts, adminTab, setAdminTab, adminPin, updateAdminPin, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder }) {
+function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, updateStores, updateVendors, updateRepresentantes, updateGerentes, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder }) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -1290,24 +1373,25 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         <button className={adminTab === 'config' ? 'tab active' : 'tab'} onClick={() => setAdminTab('config')}><Settings size={14} /> Config</button>
       </div>
       <div className="admin-body">
-        {adminTab === 'produtos' && <ProductsAdmin products={products} updateProducts={updateProducts} />}
+        {adminTab === 'produtos' && <ProductsAdmin products={products} saveProduct={saveProduct} deleteProductById={deleteProductById} />}
         {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
         {adminTab === 'gerentes' && <GerentesAdmin gerentes={gerentes} stores={stores} updateGerentes={updateGerentes} />}
-        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} />}
-        {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} />}
-        {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} />}
+        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} />}
+        {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} branding={branding} />}
+        {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} branding={branding} updateBranding={updateBranding} />}
       </div>
     </div>
   );
 }
 
-function ProductsAdmin({ products, updateProducts }) {
+function ProductsAdmin({ products, saveProduct, deleteProductById }) {
   const empty = { id: null, name: '', category: '', price: '', photo: '', active: true, peso: '', tamanho: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const [photoError, setPhotoError] = useState('');
+  const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
 
   const onPhoto = async (e) => {
@@ -1323,15 +1407,16 @@ function ProductsAdmin({ products, updateProducts }) {
     }
     e.target.value = '';
   };
-  const save = () => {
+  const save = async () => {
     if (!form.name.trim() || !form.price) return;
-    const payload = { ...form, price: Number(form.price), qtdCaixa: form.caixaNaoSeAplica ? '' : form.qtdCaixa };
-    if (editingId) updateProducts(current => current.map(p => p.id === editingId ? { ...payload, id: editingId } : p));
-    else updateProducts(current => [...current, { ...payload, id: uid() }]);
+    const payload = { ...form, price: Number(form.price), qtdCaixa: form.caixaNaoSeAplica ? '' : form.qtdCaixa, id: editingId || uid() };
+    setSaving(true);
+    await saveProduct(payload);
+    setSaving(false);
     setForm(empty); setEditingId(null);
   };
   const edit = (p) => { setForm({ ...empty, ...p, price: String(p.price) }); setEditingId(p.id); };
-  const remove = (id) => updateProducts(current => current.filter(p => p.id !== id));
+  const remove = (id) => deleteProductById(id);
 
   return (
     <div>
@@ -1369,7 +1454,7 @@ function ProductsAdmin({ products, updateProducts }) {
         {photoError && <div className="error">{photoError}</div>}
         {form.photo && <img className="preview-thumb" src={form.photo} alt="" />}
         <div className="admin-form-actions">
-          <button className="btn-primary" onClick={save}>{editingId ? 'Salvar alterações' : 'Adicionar produto'}</button>
+          <button className="btn-primary" disabled={saving} onClick={save}>{saving ? 'Salvando…' : (editingId ? 'Salvar alterações' : 'Adicionar produto')}</button>
           {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
         </div>
       </div>
@@ -1644,7 +1729,7 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
   );
 }
 
-function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder }) {
+function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder, branding }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -1673,7 +1758,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape' });
-    let y = 20;
+    let y = addLetterhead(doc, branding);
     doc.setFontSize(15);
     doc.text('Relatório de pedidos e comissões', 14, y); y += 8;
     doc.setFontSize(9);
@@ -1773,7 +1858,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
   );
 }
 
-function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady }) {
+function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady, branding }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterRepresentante, setFilterRepresentante] = useState('');
@@ -1846,7 +1931,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape' });
-    let y = 20;
+    let y = addLetterhead(doc, branding);
     doc.setFontSize(15);
     doc.text('Relatório de desempenho', 14, y); y += 8;
     doc.setFontSize(9);
@@ -2014,15 +2099,49 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady 
   );
 }
 
-function ConfigAdmin({ adminPin, updateAdminPin }) {
+function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
   const [pin, setPin] = useState(adminPin);
+  const [form, setForm] = useState(branding);
+  const [logoError, setLogoError] = useState('');
+  const fileInputRef = useRef(null);
+
+  const onLogo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoError('');
+    try {
+      const { dataUrl, width, height } = await resizeLogo(file);
+      setForm(f => ({ ...f, logo: dataUrl, logoW: width, logoH: height }));
+    } catch (err) {
+      console.error(err);
+      setLogoError('Não foi possível carregar essa imagem. Tente outro arquivo (JPG ou PNG).');
+    }
+    e.target.value = '';
+  };
+
   return (
-    <div className="admin-form">
-      <label>PIN de administrador
-        <input value={pin} onChange={e => setPin(e.target.value)} maxLength={8} />
-      </label>
-      <button className="btn-primary" onClick={() => updateAdminPin(pin)}>Salvar PIN</button>
-      <p className="hint">Este PIN dá acesso à área de administração (produtos, lojas, vendedores, representantes e comissões). A segurança aqui é simples, sem criptografia — guarde-o com os administradores de confiança.</p>
+    <div>
+      <div className="admin-form">
+        <label>PIN de administrador
+          <input value={pin} onChange={e => setPin(e.target.value)} maxLength={8} />
+        </label>
+        <button className="btn-primary" onClick={() => updateAdminPin(pin)}>Salvar PIN</button>
+        <p className="hint">Este PIN dá acesso à área de administração (produtos, lojas, vendedores, representantes e comissões). A segurança aqui é simples, sem criptografia — guarde-o com os administradores de confiança.</p>
+      </div>
+      <div className="admin-form">
+        <div className="form-subsection" style={{ borderTop: 'none', paddingTop: 0 }}>Identidade visual</div>
+        <p className="hint">A logomarca aparece na tela de login de todo mundo e no topo de todos os relatórios e pedidos gerados em PDF (como um papel timbrado).</p>
+        <label>Nome da empresa (aparece ao lado da logo nos PDFs)
+          <input value={form.companyName} onChange={e => setForm({ ...form, companyName: e.target.value })} placeholder="Ex: TSX Prime Revestimentos" />
+        </label>
+        <button type="button" className="file-label" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
+          <ImagePlus size={16} /> {form.logo ? 'Trocar logomarca' : 'Adicionar logomarca'}
+        </button>
+        <input ref={fileInputRef} type="file" accept="image/*" onChange={onLogo} style={{ display: 'none' }} />
+        {logoError && <div className="error">{logoError}</div>}
+        {form.logo && <img className="preview-thumb" src={form.logo} alt="" style={{ background: '#f4f2ee', objectFit: 'contain' }} />}
+        <button className="btn-primary" onClick={() => updateBranding(form)}>Salvar identidade visual</button>
+      </div>
     </div>
   );
 }
@@ -2048,6 +2167,7 @@ h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .login-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 36px 32px; width: 100%; max-width: 380px; }
 .login-header { text-align: left; margin-bottom: 24px; }
 .tile-mark { display: grid; grid-template-columns: repeat(2, 14px); grid-template-rows: repeat(2, 14px); gap: 3px; margin-bottom: 16px; }
+.login-logo { max-width: 160px; max-height: 64px; object-fit: contain; margin-bottom: 16px; }
 .tile-mark span { background: var(--clay); }
 .tile-mark span:nth-child(2), .tile-mark span:nth-child(3) { background: var(--ink-soft); }
 .login-header h1 { font-size: 24px; font-weight: 600; line-height: 1.2; }
