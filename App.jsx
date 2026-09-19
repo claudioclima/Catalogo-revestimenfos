@@ -54,13 +54,16 @@ function resizeLogo(file, maxW = 400, quality = 0.85) {
 function addLetterhead(doc, branding) {
   let y = 20;
   const pageWidth = doc.internal.pageSize.getWidth();
-  if (branding?.logo) {
+  const pdfLogo = branding?.logoPdf || branding?.logo;
+  const pdfLogoW = branding?.logoPdf ? branding.logoPdfW : branding?.logoW;
+  const pdfLogoH = branding?.logoPdf ? branding.logoPdfH : branding?.logoH;
+  if (pdfLogo) {
     const maxW = 30;
-    const ratio = (branding.logoW && branding.logoH) ? (branding.logoH / branding.logoW) : 1;
+    const ratio = (pdfLogoW && pdfLogoH) ? (pdfLogoH / pdfLogoW) : 1;
     const w = maxW;
     const h = Math.min(24, maxW * ratio);
     const x = (pageWidth - w) / 2;
-    try { doc.addImage(branding.logo, 'PNG', x, 10, w, h); } catch (e) { /* ignore malformed image */ }
+    try { doc.addImage(pdfLogo, 'PNG', x, 10, w, h); } catch (e) { /* ignore malformed image */ }
     y = 10 + h + 6;
     if (branding.companyName) {
       doc.setFontSize(9);
@@ -304,7 +307,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [adminPin, setAdminPin] = useState('1234');
-  const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, companyName: '', footerText: '' });
+  const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '' });
 
   const [screen, setScreen] = useState('login');
   const [loginTab, setLoginTab] = useState('vendor');
@@ -361,7 +364,7 @@ export default function App() {
     setRefreshing(true);
     const [s, v, rep, ger, p, o, pin, br] = await Promise.all([
       loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
-      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, companyName: '', footerText: '' }),
+      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '' }),
     ]);
     setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br);
     setRefreshing(false);
@@ -2253,7 +2256,9 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
   const [pin, setPin] = useState(adminPin);
   const [form, setForm] = useState(branding);
   const [logoError, setLogoError] = useState('');
+  const [logoPdfError, setLogoPdfError] = useState('');
   const fileInputRef = useRef(null);
+  const fileInputPdfRef = useRef(null);
 
   const onLogo = async (e) => {
     const file = e.target.files?.[0];
@@ -2269,6 +2274,20 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
     e.target.value = '';
   };
 
+  const onLogoPdf = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoPdfError('');
+    try {
+      const { dataUrl, width, height } = await resizeLogo(file);
+      setForm(f => ({ ...f, logoPdf: dataUrl, logoPdfW: width, logoPdfH: height }));
+    } catch (err) {
+      console.error(err);
+      setLogoPdfError('Não foi possível carregar essa imagem. Tente outro arquivo (JPG ou PNG).');
+    }
+    e.target.value = '';
+  };
+
   return (
     <div>
       <div className="admin-form">
@@ -2280,16 +2299,28 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
       </div>
       <div className="admin-form">
         <div className="form-subsection" style={{ borderTop: 'none', paddingTop: 0 }}>Identidade visual</div>
-        <p className="hint">A logomarca aparece bem destacada na tela de login de todo mundo, e centralizada no topo de todos os relatórios e pedidos em PDF (como um papel timbrado). O texto de rodapé aparece centralizado no final de cada página desses PDFs.</p>
+        <p className="hint">Use duas versões da logo: uma clara/colorida para a tela de login, e outra escura (preta) para os PDFs — assim ela aparece bem tanto no fundo do login quanto no papel branco dos relatórios.</p>
         <label>Nome da empresa (aparece abaixo da logo nos PDFs)
           <input value={form.companyName} onChange={e => setForm({ ...form, companyName: e.target.value })} placeholder="Ex: TSX Prime Revestimentos" />
         </label>
+
+        <div className="form-subsection">Logo da tela de login</div>
         <button type="button" className="file-label" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
-          <ImagePlus size={16} /> {form.logo ? 'Trocar logomarca' : 'Adicionar logomarca'}
+          <ImagePlus size={16} /> {form.logo ? 'Trocar logomarca do login' : 'Adicionar logomarca do login'}
         </button>
         <input ref={fileInputRef} type="file" accept="image/*" onChange={onLogo} style={{ display: 'none' }} />
         {logoError && <div className="error">{logoError}</div>}
-        {form.logo && <img className="preview-thumb" src={form.logo} alt="" style={{ background: '#f4f2ee', objectFit: 'contain' }} />}
+        {form.logo && <img className="preview-thumb" src={form.logo} alt="" style={{ background: '#2A2A27', objectFit: 'contain' }} />}
+
+        <div className="form-subsection">Logo dos PDFs e relatórios (use uma versão escura/preta)</div>
+        <button type="button" className="file-label" onClick={() => fileInputPdfRef.current && fileInputPdfRef.current.click()}>
+          <ImagePlus size={16} /> {form.logoPdf ? 'Trocar logomarca dos PDFs' : 'Adicionar logomarca dos PDFs'}
+        </button>
+        <input ref={fileInputPdfRef} type="file" accept="image/*" onChange={onLogoPdf} style={{ display: 'none' }} />
+        {logoPdfError && <div className="error">{logoPdfError}</div>}
+        {form.logoPdf && <img className="preview-thumb" src={form.logoPdf} alt="" style={{ background: '#f4f2ee', objectFit: 'contain' }} />}
+        {!form.logoPdf && form.logo && <p className="hint">Sem logo específica dos PDFs cadastrada ainda — por enquanto, os PDFs usam a mesma logo do login (pode não aparecer bem se ela for clara).</p>}
+
         <label>Texto de rodapé padrão dos PDFs
           <textarea rows={2} value={form.footerText} onChange={e => setForm({ ...form, footerText: e.target.value })} placeholder="Ex: Razão Social LTDA · CNPJ 00.000.000/0001-00 · (00) 00000-0000 · contato@empresa.com.br" />
         </label>
