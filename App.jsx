@@ -53,25 +53,29 @@ function resizeLogo(file, maxW = 400, quality = 0.85) {
 
 function addLetterhead(doc, branding) {
   let y = 20;
+  const pageWidth = doc.internal.pageSize.getWidth();
   if (branding?.logo) {
-    const maxW = 28;
+    const maxW = 30;
     const ratio = (branding.logoW && branding.logoH) ? (branding.logoH / branding.logoW) : 1;
     const w = maxW;
-    const h = Math.min(22, maxW * ratio);
-    try { doc.addImage(branding.logo, 'PNG', 14, 10, w, h); } catch (e) { /* ignore malformed image */ }
-    y = Math.max(y, 12 + h + 8);
+    const h = Math.min(24, maxW * ratio);
+    const x = (pageWidth - w) / 2;
+    try { doc.addImage(branding.logo, 'PNG', x, 10, w, h); } catch (e) { /* ignore malformed image */ }
+    y = 10 + h + 6;
     if (branding.companyName) {
       doc.setFontSize(9);
       doc.setTextColor(110);
-      doc.text(branding.companyName, 14 + w + 6, 10 + h / 2 + 3);
+      doc.text(branding.companyName, pageWidth / 2, y, { align: 'center' });
       doc.setTextColor(0);
+      y += 6;
     }
     doc.setDrawColor(220);
-    doc.line(14, y - 4, doc.internal.pageSize.getWidth() - 14, y - 4);
+    doc.line(14, y, pageWidth - 14, y);
     doc.setDrawColor(0);
+    y += 8;
   } else if (branding?.companyName) {
     doc.setFontSize(11);
-    doc.text(branding.companyName, 14, 16);
+    doc.text(branding.companyName, pageWidth / 2, 16, { align: 'center' });
     y = 24;
   }
   return y;
@@ -215,16 +219,22 @@ function pdfTotalsBox(doc, x0, y, width, lines) {
   return y + boxH;
 }
 
-function pdfFooterStamp(doc) {
+function pdfFooterStamp(doc, branding) {
   const pageCount = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
     const h = doc.internal.pageSize.getHeight();
     const w = doc.internal.pageSize.getWidth();
+    if (branding?.footerText) {
+      doc.setFontSize(8);
+      doc.setTextColor(120, 118, 110);
+      doc.text(branding.footerText, w / 2, h - 15, { align: 'center', maxWidth: w - 28 });
+      doc.setTextColor(0, 0, 0);
+    }
     doc.setFontSize(7.5);
     doc.setTextColor(150, 148, 140);
-    doc.text(`Gerado em ${new Date().toLocaleString('pt-BR')}`, 14, h - 10);
-    doc.text(`${i}/${pageCount}`, w - 14, h - 10, { align: 'right' });
+    doc.text(`Gerado em ${new Date().toLocaleString('pt-BR')}`, 14, h - 8);
+    doc.text(`${i}/${pageCount}`, w - 14, h - 8, { align: 'right' });
     doc.setTextColor(0, 0, 0);
   }
 }
@@ -294,7 +304,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [adminPin, setAdminPin] = useState('1234');
-  const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, companyName: '' });
+  const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, companyName: '', footerText: '' });
 
   const [screen, setScreen] = useState('login');
   const [loginTab, setLoginTab] = useState('vendor');
@@ -319,6 +329,7 @@ export default function App() {
   const [editingOrderId, setEditingOrderId] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
   const [orderSummaryBack, setOrderSummaryBack] = useState('catalog');
+  const [gerenteVendorView, setGerenteVendorView] = useState(null);
   const [adminTab, setAdminTab] = useState('produtos');
 
   const loadKey = async (key, fallback) => {
@@ -350,7 +361,7 @@ export default function App() {
     setRefreshing(true);
     const [s, v, rep, ger, p, o, pin, br] = await Promise.all([
       loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
-      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, companyName: '' }),
+      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, companyName: '', footerText: '' }),
     ]);
     setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br);
     setRefreshing(false);
@@ -391,6 +402,22 @@ export default function App() {
   const mutateVendors = (updater) => mutate(STORAGE_KEYS.vendors, updater, setVendors);
   const mutateRepresentantes = (updater) => mutate(STORAGE_KEYS.representantes, updater, setRepresentantes);
   const mutateGerentes = (updater) => mutate(STORAGE_KEYS.gerentes, updater, setGerentes);
+
+  const updateMyVendorPin = async (pin) => {
+    const next = await mutateVendors(current => current.map(v => v.id === currentVendor.id ? { ...v, pin } : v));
+    const updated = next.find(v => v.id === currentVendor.id);
+    if (updated) setCurrentVendor(updated);
+  };
+  const updateMyRepresentantePin = async (pin) => {
+    const next = await mutateRepresentantes(current => current.map(r => r.id === currentRepresentante.id ? { ...r, pin } : r));
+    const updated = next.find(r => r.id === currentRepresentante.id);
+    if (updated) setCurrentRepresentante(updated);
+  };
+  const updateMyGerentePin = async (pin) => {
+    const next = await mutateGerentes(current => current.map(g => g.id === currentGerente.id ? { ...g, pin } : g));
+    const updated = next.find(g => g.id === currentGerente.id);
+    if (updated) setCurrentGerente(updated);
+  };
   const saveProduct = async (product) => {
     try { await storage.set(`product:${product.id}`, JSON.stringify(product)); } catch (e) { console.error(e); }
     const idx = await loadKey('productIndex', []);
@@ -533,6 +560,11 @@ export default function App() {
     setLastOrder(order); setOrderSummaryBack(backScreen); setScreen('orderSummary');
   };
 
+  const openGerenteVendorView = (vendorId, period, customFrom, customTo) => {
+    setGerenteVendorView({ vendorId, period, customFrom, customTo });
+    setScreen('gerenteVendorDetail');
+  };
+
   const convertToPedido = async (orderId) => {
     const now = new Date().toISOString();
     const next = await mutateOrders(current => current.map(o => o.id === orderId ? { ...o, status: 'pedido', convertedAt: now } : o));
@@ -594,7 +626,7 @@ export default function App() {
     if (y + totalsLines.length * 6 + 10 > 280) { doc.addPage(); y = 20; }
     y = pdfTotalsBox(doc, 126, y, 70, totalsLines);
     if (order.cliente.obs) { y += 8; doc.setFontSize(9); doc.setTextColor(80, 78, 72); doc.text(`Obs: ${order.cliente.obs}`, 14, y); doc.setTextColor(0, 0, 0); }
-    pdfFooterStamp(doc);
+    pdfFooterStamp(doc, branding);
     doc.save(`${titulo.toLowerCase()}-${(order.cliente.nome || 'cliente').replace(/\s+/g, '-').toLowerCase()}.pdf`);
   };
 
@@ -663,14 +695,55 @@ export default function App() {
         <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'myReport'), branding }} />
       )}
       {screen === 'repDashboard' && currentRepresentante && (
-        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding }} />
+        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding, setScreen }} />
       )}
       {screen === 'gerenteDashboard' && currentGerente && (
-        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard'), branding }} />
+        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard'), branding, setScreen, onSelectVendor: openGerenteVendorView }} />
+      )}
+      {screen === 'gerenteVendorDetail' && currentGerente && gerenteVendorView && (
+        <GerenteVendorDetailScreen {...{
+          currentGerente, stores, vendors, orders, setScreen, pdfLibReady, branding,
+          vendorId: gerenteVendorView.vendorId,
+          initialPeriod: gerenteVendorView.period,
+          initialCustomFrom: gerenteVendorView.customFrom,
+          initialCustomTo: gerenteVendorView.customTo,
+          onOpenOrder: (o) => openOrderView(o, 'gerenteVendorDetail'),
+        }} />
+      )}
+      {screen === 'vendorConfig' && currentVendor && (
+        <ChangePinScreen title="PIN de acesso do vendedor" currentPin={currentVendor.pin} onSave={updateMyVendorPin} setScreen={setScreen} backScreen="catalog" />
+      )}
+      {screen === 'repConfig' && currentRepresentante && (
+        <ChangePinScreen title="PIN de acesso do representante" currentPin={currentRepresentante.pin} onSave={updateMyRepresentantePin} setScreen={setScreen} backScreen="repDashboard" />
+      )}
+      {screen === 'gerConfig' && currentGerente && (
+        <ChangePinScreen title="PIN de acesso do gerente" currentPin={currentGerente.pin} onSave={updateMyGerentePin} setScreen={setScreen} backScreen="gerenteDashboard" />
       )}
       {screen === 'admin' && (
         <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
+    </div>
+  );
+}
+
+function ChangePinScreen({ title, currentPin, onSave, setScreen, backScreen }) {
+  const [pin, setPin] = useState(currentPin || '');
+  const [saved, setSaved] = useState(false);
+  return (
+    <div className="screen">
+      <header className="topbar">
+        <button className="icon-btn" onClick={() => setScreen(backScreen)} title="Voltar"><ArrowLeft size={18} /></button>
+        <div className="topbar-title">Configurações</div>
+        <div style={{ width: 34 }} />
+      </header>
+      <div className="form-stack pad">
+        <p className="hint">{title}</p>
+        <label>Seu PIN
+          <input value={pin} onChange={e => { setPin(e.target.value); setSaved(false); }} maxLength={6} inputMode="numeric" placeholder="Ex: 1234" />
+        </label>
+        <button className="btn-primary" onClick={() => { onSave(pin); setSaved(true); }}>Salvar PIN</button>
+        {saved && <p className="hint">PIN atualizado! Use o novo PIN no próximo login.</p>}
+      </div>
     </div>
   );
 }
@@ -806,6 +879,7 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
           <button className="icon-btn" onClick={() => setScreen('myReport')} title="Meu relatório de vendas"><BarChart3 size={18} /></button>
           <button className="icon-btn" onClick={() => setScreen('quotes')} title="Meus orçamentos"><FileText size={18} /></button>
           <button className="icon-btn" onClick={() => setScreen('myOrders')} title="Meus pedidos"><Receipt size={18} /></button>
+          <button className="icon-btn" onClick={() => setScreen('vendorConfig')} title="Configurações"><Settings size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
           <button className="cart-btn" onClick={() => setScreen('cart')}>
             <ShoppingCart size={18} />
@@ -957,8 +1031,8 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
       </header>
       <div className="printable">
         <div className={isPedido ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{isPedido ? 'Pedido' : 'Orçamento'}</div>
-        <h2>{isPedido ? 'Pedido' : 'Orçamento'} nº {order.numero || '—'}</h2>
-        <p className="muted">{order.storeName} · Vendedor: {order.vendorName} · {new Date(order.createdAt).toLocaleString('pt-BR')}</p>
+        <h2>{isPedido ? 'Pedido' : 'Orçamento'}</h2>
+        <p className="muted">Nº {order.numero || '—'} · {order.storeName} · Vendedor: {order.vendorName} · {new Date(order.createdAt).toLocaleString('pt-BR')}</p>
         <div className="divider" />
         <p><strong>Cliente:</strong> {order.cliente.nome}</p>
         {order.cliente.telefone && <p><strong>Telefone:</strong> {order.cliente.telefone}</p>}
@@ -1104,7 +1178,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
     y += 6;
     if (y + 30 > 280) { doc.addPage(); y = 20; }
     y = pdfTotalsBox(doc, 124, y, 70, [`Pedidos: ${pedidos.length}`, `Total em vendas: ${currency(totalPedidos)}`, `Comissão: ${currency(totalComissao)}`]);
-    pdfFooterStamp(doc);
+    pdfFooterStamp(doc, branding);
     return doc;
   };
 
@@ -1149,7 +1223,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
   );
 }
 
-function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding }) {
+function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1203,7 +1277,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
       `Comissão da loja: ${currency(detComissaoLoja)}`,
       `Comissão do representante: ${currency(detComissaoRep)}`,
     ]);
-    pdfFooterStamp(doc);
+    pdfFooterStamp(doc, branding);
     return doc;
   };
 
@@ -1213,6 +1287,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
         <div><div className="topbar-title">Painel do representante</div><div className="topbar-sub">{currentRepresentante.name}</div></div>
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <button className="icon-btn" onClick={() => setScreen('repConfig')} title="Configurações"><Settings size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
         </div>
       </header>
@@ -1288,7 +1363,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   );
 }
 
-function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding }) {
+function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, onSelectVendor }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1308,9 +1383,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
   const totPedCount = porVendedor.reduce((s, v) => s + v.pedCount, 0);
   const totPedValue = porVendedor.reduce((s, v) => s + v.pedValue, 0);
 
-  const selectedVendor = selectedVendorId ? storeVendors.find(v => v.id === selectedVendorId) : null;
-  const scopedPedidos = selectedVendorId ? pedidos.filter(o => o.vendorId === selectedVendorId) : pedidos;
-  const sortedScoped = [...scopedPedidos].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const goToVendor = (vendorId) => onSelectVendor(vendorId, period, customFrom, customTo);
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
@@ -1333,7 +1406,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
     y += 6;
     if (y + 30 > 190) { doc.addPage(); y = 20; }
     y = pdfTotalsBox(doc, 14, y, 90, [`Faturamento total: ${currency(faturamentoTotal)}`, `Comissão da loja: ${currency(comissaoLojaTotal)}`]);
-    pdfFooterStamp(doc);
+    pdfFooterStamp(doc, branding);
     return doc;
   };
 
@@ -1343,32 +1416,31 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
         <div><div className="topbar-title">{myStore?.name}</div><div className="topbar-sub">Gerente: {currentGerente.name}</div></div>
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <button className="icon-btn" onClick={() => setScreen('gerConfig')} title="Configurações"><Settings size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
         </div>
       </header>
       <div className="form-stack pad">
         <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
         <label>Vendedor
-          <select value={selectedVendorId} onChange={e => setSelectedVendorId(e.target.value)}>
+          <select value={selectedVendorId} onChange={e => { setSelectedVendorId(e.target.value); if (e.target.value) goToVendor(e.target.value); }}>
             <option value="">Geral (todos os vendedores)</option>
             {storeVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
         </label>
 
         <div className="stats-row">
-          <div className="stat-card"><div className="stat-label">{selectedVendor ? `Faturamento — ${selectedVendor.name}` : 'Faturamento da loja'}</div><div className="stat-value">{currency(selectedVendor ? (porVendedor.find(v => v.id === selectedVendorId)?.pedValue || 0) : faturamentoTotal)}</div></div>
+          <div className="stat-card"><div className="stat-label">Faturamento da loja (Geral)</div><div className="stat-value">{currency(faturamentoTotal)}</div></div>
           <div className="stat-card"><div className="stat-label">Comissão da loja</div><div className="stat-value">{currency(comissaoLojaTotal)}</div></div>
         </div>
 
         <h3 className="report-heading">Ranking por vendedor</h3>
         <div className="report-cards">
           {porVendedor.map(v => (
-            <div key={v.id} className={selectedVendorId === v.id ? 'report-card selected' : 'report-card'}>
+            <div key={v.id} className="report-card">
               <div className="report-card-title">{v.name}</div>
               <div className="report-card-row"><span className="label">Pedidos</span><span>{v.pedCount} · {currency(v.pedValue)}</span></div>
-              <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => setSelectedVendorId(selectedVendorId === v.id ? '' : v.id)}>
-                {selectedVendorId === v.id ? 'Fechar lista' : 'Ver pedidos'}
-              </button>
+              <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => goToVendor(v.id)}>Ver pedidos</button>
             </div>
           ))}
           {porVendedor.length > 0 && (
@@ -1379,24 +1451,71 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
           {porVendedor.length === 0 && <p className="hint">Nenhum vendedor cadastrado para esta loja ainda.</p>}
         </div>
 
-        {selectedVendorId && (
-          <>
-            <h3 className="report-heading">Pedidos — {selectedVendor?.name}</h3>
-            <div className="admin-list">
-              {sortedScoped.map(o => (
-                <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
-                  <div>
-                    <div><strong>{o.cliente.nome}</strong> <span className="muted">nº {o.numero || '—'}</span></div>
-                    <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
-                  </div>
-                  <div className="order-row-values"><span>{currency(o.total)}</span></div>
-                </div>
-              ))}
-              {sortedScoped.length === 0 && <p className="hint">Nenhum pedido desse vendedor nesse período.</p>}
-            </div>
-          </>
-        )}
         <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-loja.pdf" />
+      </div>
+    </div>
+  );
+}
+
+function GerenteVendorDetailScreen({ currentGerente, vendorId, initialPeriod, initialCustomFrom, initialCustomTo, stores, vendors, orders, setScreen, pdfLibReady, branding, onOpenOrder }) {
+  const [period, setPeriod] = useState(initialPeriod || 'mes');
+  const [customFrom, setCustomFrom] = useState(initialCustomFrom || '');
+  const [customTo, setCustomTo] = useState(initialCustomTo || '');
+
+  const myStore = stores.find(s => s.id === currentGerente.storeId);
+  const vendor = vendors.find(v => v.id === vendorId);
+  const pedidos = orders.filter(o => o.status === 'pedido' && o.vendorId === vendorId && o.storeId === currentGerente.storeId && isWithinPeriod(o.createdAt, period, customFrom, customTo))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const faturamentoTotal = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+
+  const buildDoc = () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    let y = pdfHeader(doc, branding, `Relatório de vendas — ${vendor?.name || ''}`, [
+      `Loja: ${myStore?.name || ''} · Gerente: ${currentGerente.name}`,
+      `Período: ${periodLabel(period, customFrom, customTo)}`,
+    ]);
+    const cols = [
+      { label: 'Data', width: 30 },
+      { label: 'Cliente', width: 70, maxChars: 36 },
+      { label: 'Total', width: 40, align: 'right' },
+    ];
+    const rows = pedidos.map(o => [new Date(o.createdAt).toLocaleDateString('pt-BR'), o.cliente.nome, currency(o.total)]);
+    y = drawPdfTable(doc, 14, y, cols, rows);
+    y += 6;
+    if (y + 24 > 280) { doc.addPage(); y = 20; }
+    y = pdfTotalsBox(doc, 124, y, 70, [`Pedidos: ${pedidos.length}`, `Faturamento: ${currency(faturamentoTotal)}`]);
+    pdfFooterStamp(doc, branding);
+    return doc;
+  };
+
+  return (
+    <div className="screen">
+      <header className="topbar">
+        <button className="icon-btn" onClick={() => setScreen('gerenteDashboard')} title="Voltar"><ArrowLeft size={18} /></button>
+        <div className="topbar-title">{vendor?.name || 'Vendedor'}</div>
+        <div style={{ width: 34 }} />
+      </header>
+      <div className="form-stack pad">
+        <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
+        <div className="stats-row">
+          <div className="stat-card"><div className="stat-label">Pedidos</div><div className="stat-value">{pedidos.length}</div></div>
+          <div className="stat-card"><div className="stat-label">Faturamento</div><div className="stat-value">{currency(faturamentoTotal)}</div></div>
+        </div>
+        <h3 className="report-heading">Pedidos de {vendor?.name}</h3>
+        <div className="admin-list">
+          {pedidos.map(o => (
+            <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
+              <div>
+                <div><strong>{o.cliente.nome}</strong> <span className="muted">nº {o.numero || '—'}</span></div>
+                <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
+              </div>
+              <div className="order-row-values"><span>{currency(o.total)}</span></div>
+            </div>
+          ))}
+          {pedidos.length === 0 && <p className="hint">Nenhum pedido desse vendedor nesse período.</p>}
+        </div>
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename={`relatorio-${(vendor?.name || 'vendedor').replace(/\s+/g, '-').toLowerCase()}.pdf`} />
       </div>
     </div>
   );
@@ -1835,7 +1954,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
       `Comissão vendedores: ${currency(totalComissaoVendedor)}`,
       `Em orçamento (não convertido): ${currency(totalOrcamentos)}`,
     ]);
-    pdfFooterStamp(doc);
+    pdfFooterStamp(doc, branding);
     return doc;
   };
 
@@ -2025,7 +2144,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady,
     y += 5;
     y = pdfTotalsBox(doc, 14, y, 110, [`${totRepPed} pedidos (${currency(totRepPedValue)}) · Comissão ${currency(totRepComissao)}`]);
 
-    pdfFooterStamp(doc);
+    pdfFooterStamp(doc, branding);
     return doc;
   };
 
@@ -2161,8 +2280,8 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
       </div>
       <div className="admin-form">
         <div className="form-subsection" style={{ borderTop: 'none', paddingTop: 0 }}>Identidade visual</div>
-        <p className="hint">A logomarca aparece na tela de login de todo mundo e no topo de todos os relatórios e pedidos gerados em PDF (como um papel timbrado).</p>
-        <label>Nome da empresa (aparece ao lado da logo nos PDFs)
+        <p className="hint">A logomarca aparece bem destacada na tela de login de todo mundo, e centralizada no topo de todos os relatórios e pedidos em PDF (como um papel timbrado). O texto de rodapé aparece centralizado no final de cada página desses PDFs.</p>
+        <label>Nome da empresa (aparece abaixo da logo nos PDFs)
           <input value={form.companyName} onChange={e => setForm({ ...form, companyName: e.target.value })} placeholder="Ex: TSX Prime Revestimentos" />
         </label>
         <button type="button" className="file-label" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
@@ -2171,6 +2290,9 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
         <input ref={fileInputRef} type="file" accept="image/*" onChange={onLogo} style={{ display: 'none' }} />
         {logoError && <div className="error">{logoError}</div>}
         {form.logo && <img className="preview-thumb" src={form.logo} alt="" style={{ background: '#f4f2ee', objectFit: 'contain' }} />}
+        <label>Texto de rodapé padrão dos PDFs
+          <textarea rows={2} value={form.footerText} onChange={e => setForm({ ...form, footerText: e.target.value })} placeholder="Ex: Razão Social LTDA · CNPJ 00.000.000/0001-00 · (00) 00000-0000 · contato@empresa.com.br" />
+        </label>
         <button className="btn-primary" onClick={() => updateBranding(form)}>Salvar identidade visual</button>
       </div>
     </div>
@@ -2198,7 +2320,7 @@ h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .login-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 36px 32px; width: 100%; max-width: 380px; }
 .login-header { text-align: left; margin-bottom: 24px; }
 .tile-mark { display: grid; grid-template-columns: repeat(2, 14px); grid-template-rows: repeat(2, 14px); gap: 3px; margin-bottom: 16px; }
-.login-logo { max-width: 160px; max-height: 64px; object-fit: contain; margin-bottom: 16px; }
+.login-logo { max-width: 260px; max-height: 130px; width: 100%; object-fit: contain; object-position: left; margin-bottom: 20px; }
 .tile-mark span { background: var(--clay); }
 .tile-mark span:nth-child(2), .tile-mark span:nth-child(3) { background: var(--ink-soft); }
 .login-header h1 { font-size: 24px; font-weight: 600; line-height: 1.2; }
