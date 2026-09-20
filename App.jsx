@@ -969,14 +969,16 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
         <div className="product-grid">
           {filtered.map(p => (
             <div key={p.id} className="product-card">
-              <div className="product-photo">{p.photo ? <img src={p.photo} alt={p.name} /> : <div className="photo-placeholder"><Package size={22} /></div>}</div>
+              <div className="product-photo">
+                {p.photo ? <img src={p.photo} alt={p.name} /> : <div className="photo-placeholder"><Package size={22} /></div>}
+                <button className="add-btn" onClick={() => onAddClick(p.id)}><Plus size={18} /></button>
+              </div>
               <div className="product-info">
                 <div className="product-name">{p.name}</div>
                 <div className="product-category">{p.category}</div>
                 {productSpecsLine(p) && <div className="product-specs">{productSpecsLine(p)}</div>}
                 <div className="product-price">{currency(p.price)}</div>
               </div>
-              <button className="add-btn" onClick={() => onAddClick(p.id)}><Plus size={16} /></button>
             </div>
           ))}
         </div>
@@ -1263,7 +1265,8 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
         <div className="stats-row">
           <div className="stat-card"><div className="stat-label">Pedidos</div><div className="stat-value">{pedidos.length} · {currency(totalPedidos)}</div></div>
           <div className="stat-card"><div className="stat-label">Minha comissão</div><div className="stat-value">{currency(totalComissao)}</div></div>
-          <div className="stat-card"><div className="stat-label">— já recebida</div><div className="stat-value">{currency(totalComissaoPaga)}</div></div>
+          <div className="stat-card"><div className="stat-label">Já recebida</div><div className="stat-value">{currency(totalComissaoPaga)}</div></div>
+          <div className="stat-card"><div className="stat-label">Saldo a receber</div><div className="stat-value">{currency(totalComissao - totalComissaoPaga)}</div></div>
         </div>
 
         <div className="admin-list">
@@ -2173,27 +2176,29 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
             <div className="order-row-values">
               <span>{currency(o.total)}</span>
               <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
-              {o.status === 'pedido' ? (
-                <span className="muted">
-                  Vend.: {currency(o.commissionVendorValue)}{' '}
-                  <button className={o.vendorCommissionPaid ? 'paid-toggle paid' : 'paid-toggle'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'vendorCommissionPaid', !o.vendorCommissionPaid); }}>
-                    {o.vendorCommissionPaid ? 'Paga' : 'Marcar paga'}
-                  </button>
-                </span>
-              ) : (
-                <span className="muted">Vend.: {currency(o.commissionVendorValue)}</span>
-              )}
+              <span className="muted">
+                Vend.: {currency(o.commissionVendorValue)}
+                {o.status === 'pedido' && o.vendorCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
+              </span>
               {o.status === 'pedido' && o.representanteId && (
                 <span className="muted">
-                  Repr.: {currency(o.commissionRepresentanteValue)}{' '}
-                  <button className={o.representanteCommissionPaid ? 'paid-toggle paid' : 'paid-toggle'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'representanteCommissionPaid', !o.representanteCommissionPaid); }}>
-                    {o.representanteCommissionPaid ? 'Paga' : 'Marcar paga'}
-                  </button>
+                  Repr.: {currency(o.commissionRepresentanteValue)}
+                  {o.representanteCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
                 </span>
               )}
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {o.status === 'orcamento' && (
                   <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
+                )}
+                {o.status === 'pedido' && (
+                  <button className={o.vendorCommissionPaid ? 'btn-secondary small paid-btn active' : 'btn-secondary small paid-btn'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'vendorCommissionPaid', !o.vendorCommissionPaid); }}>
+                    {o.vendorCommissionPaid ? 'Comissão vend. paga' : 'Marcar com. vend. paga'}
+                  </button>
+                )}
+                {o.status === 'pedido' && o.representanteId && (
+                  <button className={o.representanteCommissionPaid ? 'btn-secondary small paid-btn active' : 'btn-secondary small paid-btn'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'representanteCommissionPaid', !o.representanteCommissionPaid); }}>
+                    {o.representanteCommissionPaid ? 'Comissão repr. paga' : 'Marcar com. repr. paga'}
+                  </button>
                 )}
                 <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apagar este ${o.status === 'pedido' ? 'pedido' : 'orçamento'} de ${o.cliente.nome}? Essa ação não pode ser desfeita.`)) deleteOrder(o.id); }}>
                   <Trash2 size={14} />
@@ -2585,7 +2590,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .chip.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 0 16px 90px; }
 .product-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; position: relative; display: flex; flex-direction: column; }
-.product-photo { aspect-ratio: 1; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.product-photo { aspect-ratio: 1; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
 .product-photo img { width: 100%; height: 100%; object-fit: cover; }
 .photo-placeholder { color: var(--ink-soft); }
 .product-info { padding: 10px 12px; }
@@ -2593,7 +2598,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .product-category { font-size: 11px; color: var(--ink-soft); margin: 2px 0 2px; }
 .product-specs { font-size: 10px; color: var(--ink-soft); margin: 0 0 6px; }
 .product-price { font-size: 14px; font-weight: 600; color: var(--clay-dark); }
-.add-btn { position: absolute; bottom: 46px; right: 8px; background: var(--ink); color: #fff; border: none; width: 30px; height: 30px; border-radius: 15px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.add-btn { position: absolute; bottom: 10px; right: 10px; background: #C9A227; color: #1B1A18; border: none; width: 40px; height: 40px; border-radius: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.25); }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 24px; color: var(--ink-soft); gap: 10px; text-align: center; }
 .floating-cart { position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 688px; margin: 0 auto; background: var(--ink); color: #fff; padding: 14px 18px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; cursor: pointer; }
 .cart-list { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -2658,8 +2663,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .goal-progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-bottom: 4px; }
 .goal-progress-bar { background: var(--line); height: 8px; border-radius: 4px; overflow: hidden; }
 .goal-progress-fill { background: var(--clay); height: 100%; border-radius: 4px; }
-.paid-toggle { border: 1px solid var(--line); background: var(--surface); border-radius: 3px; font-size: 10px; padding: 2px 6px; color: var(--ink-soft); cursor: pointer; }
+.paid-toggle { border: 1px solid var(--line); background: var(--surface); border-radius: 3px; font-size: 10px; padding: 2px 6px; color: var(--ink-soft); display: inline-block; }
 .paid-toggle.paid { background: var(--ink); color: #fff; border-color: var(--ink); }
+.paid-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .report-card-title { font-weight: 600; margin-bottom: 6px; }
 .report-card-row { display: flex; justify-content: space-between; padding: 3px 0; gap: 10px; }
 .report-card-row .label { color: var(--ink-soft); }
