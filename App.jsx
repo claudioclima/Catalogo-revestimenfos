@@ -242,6 +242,38 @@ function pdfFooterStamp(doc, branding) {
   }
 }
 
+function cleanPhoneForWa(phone) {
+  if (!phone) return null;
+  let digits = String(phone).replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.length <= 11) digits = '55' + digits;
+  return digits;
+}
+
+function notifyPhoneForOrder(order, stores, representantes, gerentes) {
+  const store = stores.find(s => s.id === order.storeId);
+  if (store?.representanteId) {
+    const rep = representantes.find(r => r.id === store.representanteId);
+    if (rep?.telefone) return rep.telefone;
+  }
+  const ger = gerentes.find(g => g.storeId === order.storeId);
+  if (ger?.telefone) return ger.telefone;
+  return null;
+}
+
+function conversionWaLink(order, phone) {
+  const number = cleanPhoneForWa(phone);
+  if (!number) return null;
+  const lines = [
+    `*Novo pedido fechado* — nº ${order.numero || '—'}`,
+    `Loja: ${order.storeName}`,
+    `Vendedor: ${order.vendorName}`,
+    `Cliente: ${order.cliente.nome}`,
+    `Valor: ${currency(order.total)}`,
+  ].join('\n');
+  return `https://wa.me/${number}?text=${encodeURIComponent(lines)}`;
+}
+
 function periodLabel(period, customFrom, customTo) {
   if (period === 'dia') return 'Hoje';
   if (period === 'semana') return 'Esta semana';
@@ -256,6 +288,22 @@ function vendorRanking(storeId, orders, vendors) {
     const total = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
     return { id: v.id, name: v.name, total, count: pedidos.length };
   }).sort((a, b) => b.total - a.total);
+}
+
+function exportOrdersCSV(orders, filename) {
+  const headers = ['Numero', 'Data', 'Loja', 'Vendedor', 'Cliente', 'Telefone', 'Status', 'Total', 'ComissaoLoja', 'ComissaoVendedor', 'ComissaoVendedorPaga', 'ComissaoRepresentante', 'ComissaoRepresentantePaga'];
+  const rows = orders.map(o => [
+    o.numero || '', new Date(o.createdAt).toLocaleDateString('pt-BR'), o.storeName, o.vendorName, o.cliente?.nome || '', o.cliente?.telefone || '',
+    o.status === 'pedido' ? 'Pedido' : 'Orçamento', o.total, o.commissionStoreValue, o.commissionVendorValue,
+    o.vendorCommissionPaid ? 'Sim' : 'Não', o.commissionRepresentanteValue || 0, o.representanteCommissionPaid ? 'Sim' : 'Não',
+  ]);
+  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 async function shareOrDownloadPdf(doc, filename) {
@@ -294,7 +342,7 @@ function ReportPdfButtons({ pdfLibReady, buildDoc, filename }) {
   );
 }
 
-const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding' };
+const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding', metas: 'metas' };
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -308,6 +356,7 @@ export default function App() {
   const [orders, setOrders] = useState([]);
   const [adminPin, setAdminPin] = useState('1234');
   const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '' });
+  const [metas, setMetas] = useState([]);
 
   const [screen, setScreen] = useState('login');
   const [loginTab, setLoginTab] = useState('vendor');
@@ -362,13 +411,14 @@ export default function App() {
 
   const refreshAll = async () => {
     setRefreshing(true);
-    const [s, v, rep, ger, p, o, pin, br] = await Promise.all([
+    const [s, v, rep, ger, p, o, pin, br, met] = await Promise.all([
       loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
       loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '' }),
+      loadKey(STORAGE_KEYS.metas, []),
     ]);
-    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br);
+    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br); setMetas(met);
     setRefreshing(false);
-    return { s, v, rep, ger, p, o, pin, br };
+    return { s, v, rep, ger, p, o, pin, br, met };
   };
 
   useEffect(() => {
@@ -405,6 +455,7 @@ export default function App() {
   const mutateVendors = (updater) => mutate(STORAGE_KEYS.vendors, updater, setVendors);
   const mutateRepresentantes = (updater) => mutate(STORAGE_KEYS.representantes, updater, setRepresentantes);
   const mutateGerentes = (updater) => mutate(STORAGE_KEYS.gerentes, updater, setGerentes);
+  const mutateMetas = (updater) => mutate(STORAGE_KEYS.metas, updater, setMetas);
 
   const updateMyVendorPin = async (pin) => {
     const next = await mutateVendors(current => current.map(v => v.id === currentVendor.id ? { ...v, pin } : v));
@@ -533,6 +584,8 @@ export default function App() {
       commissionStorePercent: store?.commissionPercent || 0,
       commissionVendorPercent: currentVendor?.commissionPercent || 0,
       commissionStoreValue, commissionVendorValue, commissionRepresentanteValue,
+      vendorCommissionPaid: false, vendorCommissionPaidAt: null,
+      representanteCommissionPaid: false, representanteCommissionPaidAt: null,
       status: 'orcamento',
       convertedAt: null,
     };
@@ -571,10 +624,21 @@ export default function App() {
   const convertToPedido = async (orderId) => {
     const now = new Date().toISOString();
     const next = await mutateOrders(current => current.map(o => o.id === orderId ? { ...o, status: 'pedido', convertedAt: now } : o));
-    if (lastOrder && lastOrder.id === orderId) {
-      const updated = next.find(o => o.id === orderId);
-      if (updated) setLastOrder(updated);
+    const updated = next.find(o => o.id === orderId);
+    if (lastOrder && lastOrder.id === orderId && updated) setLastOrder(updated);
+    if (updated) {
+      const phone = notifyPhoneForOrder(updated, stores, representantes, gerentes);
+      if (phone) {
+        const link = conversionWaLink(updated, phone);
+        if (link) window.open(link, '_blank');
+      }
     }
+  };
+
+  const markCommissionPaid = async (orderId, field, paid) => {
+    const now = paid ? new Date().toISOString() : null;
+    const paidAtField = field === 'vendorCommissionPaid' ? 'vendorCommissionPaidAt' : 'representanteCommissionPaidAt';
+    await mutateOrders(current => current.map(o => o.id === orderId ? { ...o, [field]: paid, [paidAtField]: now } : o));
   };
 
   const deleteOrder = async (orderId) => {
@@ -698,10 +762,10 @@ export default function App() {
         <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'myReport'), branding }} />
       )}
       {screen === 'repDashboard' && currentRepresentante && (
-        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding, setScreen }} />
+        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding, setScreen, metas }} />
       )}
       {screen === 'gerenteDashboard' && currentGerente && (
-        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard'), branding, setScreen, onSelectVendor: openGerenteVendorView }} />
+        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard'), branding, setScreen, onSelectVendor: openGerenteVendorView, metas }} />
       )}
       {screen === 'gerenteVendorDetail' && currentGerente && gerenteVendorView && (
         <GerenteVendorDetailScreen {...{
@@ -723,7 +787,7 @@ export default function App() {
         <ChangePinScreen title="PIN de acesso do gerente" currentPin={currentGerente.pin} onSave={updateMyGerentePin} setScreen={setScreen} backScreen="gerenteDashboard" />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -1163,6 +1227,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
 
   const totalPedidos = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const totalComissao = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
+  const totalComissaoPaga = pedidos.filter(o => o.vendorCommissionPaid).reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
@@ -1198,6 +1263,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
         <div className="stats-row">
           <div className="stat-card"><div className="stat-label">Pedidos</div><div className="stat-value">{pedidos.length} · {currency(totalPedidos)}</div></div>
           <div className="stat-card"><div className="stat-label">Minha comissão</div><div className="stat-value">{currency(totalComissao)}</div></div>
+          <div className="stat-card"><div className="stat-label">— já recebida</div><div className="stat-value">{currency(totalComissaoPaga)}</div></div>
         </div>
 
         <div className="admin-list">
@@ -1209,7 +1275,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
               </div>
               <div className="order-row-values">
                 <span>{currency(o.total)}</span>
-                <span className="muted">Comissão: {currency(o.commissionVendorValue)}</span>
+                <span className="muted">Comissão: {currency(o.commissionVendorValue)} {o.vendorCommissionPaid ? <span className="paid-toggle paid" style={{ pointerEvents: 'none' }}>Recebida</span> : <span className="paid-toggle" style={{ pointerEvents: 'none' }}>Pendente</span>}</span>
               </div>
             </div>
           ))}
@@ -1226,7 +1292,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
   );
 }
 
-function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen }) {
+function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, metas }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1239,11 +1305,15 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   const detailedFiltered = filtered.filter(o => !storeFilter || o.storeId === storeFilter).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const totalComissaoGeral = filtered.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
 
+  const mesAtual = currentMonthStr();
+
   const porLoja = myStores.map(s => {
     const pedidos = filtered.filter(o => o.storeId === s.id);
     const pedValue = pedidos.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
     const comissao = pedidos.reduce((sum, o) => sum + (Number(o.commissionRepresentanteValue) || 0), 0);
-    return { id: s.id, name: s.name, pedCount: pedidos.length, pedValue, comissao };
+    const faturamentoMes = orders.filter(o => o.status === 'pedido' && o.storeId === s.id && o.createdAt.slice(0, 7) === mesAtual).reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const meta = getMeta(metas, s.id, null, mesAtual);
+    return { id: s.id, name: s.name, pedCount: pedidos.length, pedValue, comissao, faturamentoMes, meta };
   });
   const totalPedCount = porLoja.reduce((s, l) => s + l.pedCount, 0);
   const totalPedValue = porLoja.reduce((s, l) => s + l.pedValue, 0);
@@ -1316,6 +1386,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
               <div className="report-card-title">{l.name}</div>
               <div className="report-card-row"><span className="label">Pedidos</span><span>{l.pedCount} · {currency(l.pedValue)}</span></div>
               <div className="report-card-row"><span className="label">Comissão</span><span>{currency(l.comissao)}</span></div>
+              {l.meta && <GoalProgress label="Este mês" current={l.faturamentoMes} goal={l.meta} />}
               <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => setExpandedStoreId(expandedStoreId === l.id ? null : l.id)}><TrendingUp size={13} /> Ranking</button>
             </div>
           ))}
@@ -1366,7 +1437,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   );
 }
 
-function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, onSelectVendor }) {
+function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, onSelectVendor, metas }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1376,6 +1447,10 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
   const pedidos = orders.filter(o => o.status === 'pedido' && o.storeId === currentGerente.storeId && isWithinPeriod(o.createdAt, period, customFrom, customTo));
   const faturamentoTotal = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const comissaoLojaTotal = pedidos.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
+
+  const mesAtual = currentMonthStr();
+  const faturamentoMesAtual = orders.filter(o => o.status === 'pedido' && o.storeId === currentGerente.storeId && o.createdAt.slice(0, 7) === mesAtual).reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const metaLoja = getMeta(metas, currentGerente.storeId, null, mesAtual);
 
   const storeVendors = vendors.filter(v => v.storeId === currentGerente.storeId);
   const porVendedor = storeVendors.map(v => {
@@ -1437,15 +1512,22 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
           <div className="stat-card"><div className="stat-label">Comissão da loja</div><div className="stat-value">{currency(comissaoLojaTotal)}</div></div>
         </div>
 
+        {metaLoja && <GoalProgress label="Faturamento deste mês" current={faturamentoMesAtual} goal={metaLoja} />}
+
         <h3 className="report-heading">Ranking por vendedor</h3>
         <div className="report-cards">
-          {porVendedor.map(v => (
-            <div key={v.id} className="report-card">
-              <div className="report-card-title">{v.name}</div>
-              <div className="report-card-row"><span className="label">Pedidos</span><span>{v.pedCount} · {currency(v.pedValue)}</span></div>
-              <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => goToVendor(v.id)}>Ver pedidos</button>
-            </div>
-          ))}
+          {porVendedor.map(v => {
+            const metaVendedor = getMeta(metas, currentGerente.storeId, v.id, mesAtual);
+            const faturamentoVendedorMes = orders.filter(o => o.status === 'pedido' && o.vendorId === v.id && o.storeId === currentGerente.storeId && o.createdAt.slice(0, 7) === mesAtual).reduce((s, o) => s + (Number(o.total) || 0), 0);
+            return (
+              <div key={v.id} className="report-card">
+                <div className="report-card-title">{v.name}</div>
+                <div className="report-card-row"><span className="label">Pedidos</span><span>{v.pedCount} · {currency(v.pedValue)}</span></div>
+                {metaVendedor && <GoalProgress label="Este mês" current={faturamentoVendedorMes} goal={metaVendedor} />}
+                <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => goToVendor(v.id)}>Ver pedidos</button>
+              </div>
+            );
+          })}
           {porVendedor.length > 0 && (
             <div className="report-card footer">
               <div className="report-card-row"><span className="label">Total pedidos</span><span>{totPedCount} · {currency(totPedValue)}</span></div>
@@ -1524,7 +1606,7 @@ function GerenteVendorDetailScreen({ currentGerente, vendorId, initialPeriod, in
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, updateStores, updateVendors, updateRepresentantes, updateGerentes, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, refreshAll, refreshing, onOpenOrder }) {
+function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -1540,6 +1622,7 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         <button className={adminTab === 'vendedores' ? 'tab active' : 'tab'} onClick={() => setAdminTab('vendedores')}><Users size={14} /> Vendedores</button>
         <button className={adminTab === 'representantes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('representantes')}><UserCog size={14} /> Representantes</button>
         <button className={adminTab === 'gerentes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('gerentes')}><UserCog size={14} /> Gerentes</button>
+        <button className={adminTab === 'metas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('metas')}><TrendingUp size={14} /> Metas</button>
         <button className={adminTab === 'pedidos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('pedidos')}><Receipt size={14} /> Orçamentos/Pedidos</button>
         <button className={adminTab === 'relatorios' ? 'tab active' : 'tab'} onClick={() => setAdminTab('relatorios')}><BarChart3 size={14} /> Relatórios</button>
         <button className={adminTab === 'config' ? 'tab active' : 'tab'} onClick={() => setAdminTab('config')}><Settings size={14} /> Config</button>
@@ -1550,7 +1633,8 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
         {adminTab === 'gerentes' && <GerentesAdmin gerentes={gerentes} stores={stores} updateGerentes={updateGerentes} />}
-        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} />}
+        {adminTab === 'metas' && <MetasAdmin metas={metas} stores={stores} vendors={vendors} updateMetas={updateMetas} />}
+        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} />}
         {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} branding={branding} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} branding={branding} updateBranding={updateBranding} />}
       </div>
@@ -1855,7 +1939,7 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
 }
 
 function GerentesAdmin({ gerentes, stores, updateGerentes }) {
-  const empty = { id: null, name: '', storeId: '', pin: '' };
+  const empty = { id: null, name: '', storeId: '', pin: '', telefone: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const save = () => {
@@ -1864,12 +1948,12 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
     else updateGerentes(current => [...current, { ...form, id: uid() }]);
     setForm(empty); setEditingId(null);
   };
-  const edit = (g) => { setForm({ ...g }); setEditingId(g.id); };
+  const edit = (g) => { setForm({ ...empty, ...g }); setEditingId(g.id); };
   const remove = (id) => updateGerentes(current => current.filter(g => g.id !== id));
   return (
     <div>
       <div className="admin-form">
-        <p className="hint">O gerente acompanha o desempenho de uma loja específica: faturamento, orçamentos/pedidos e o ranking de vendedores dela.</p>
+        <p className="hint">O gerente acompanha o desempenho de uma loja específica: faturamento, orçamentos/pedidos e o ranking de vendedores dela. O telefone é usado para receber o aviso automático por WhatsApp quando um pedido é confirmado (caso a loja não tenha representante cadastrado).</p>
         <label>Nome do gerente
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Ana Paula" />
         </label>
@@ -1878,6 +1962,9 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
             <option value="">Selecione a loja</option>
             {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
+        </label>
+        <label>Telefone (WhatsApp)
+          <input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} placeholder="(00) 00000-0000" />
         </label>
         <label>PIN de acesso
           <input value={form.pin} onChange={e => setForm({ ...form, pin: e.target.value })} placeholder="Ex: 1234" maxLength={6} />
@@ -1890,7 +1977,7 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
       <div className="admin-list">
         {gerentes.map(g => (
           <div key={g.id} className="admin-list-item">
-            <div className="admin-list-info"><div>{g.name}</div><div className="muted">{stores.find(s => s.id === g.storeId)?.name || '—'} · PIN {g.pin}</div></div>
+            <div className="admin-list-info"><div>{g.name}</div><div className="muted">{stores.find(s => s.id === g.storeId)?.name || '—'} · PIN {g.pin} · {g.telefone || 'sem telefone'}</div></div>
             <button className="icon-btn" onClick={() => edit(g)}>✎</button>
             <button className="icon-btn" onClick={() => remove(g.id)}><Trash2 size={16} /></button>
           </div>
@@ -1901,7 +1988,86 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
   );
 }
 
-function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder, branding }) {
+function currentMonthStr() { return new Date().toISOString().slice(0, 7); }
+
+function getMeta(metas, storeId, vendorId, mes) {
+  const vendorMeta = metas.find(m => m.storeId === storeId && m.vendorId === vendorId && m.mes === mes);
+  if (vendorMeta) return vendorMeta;
+  return metas.find(m => m.storeId === storeId && !m.vendorId && m.mes === mes) || null;
+}
+
+function GoalProgress({ label, current, goal }) {
+  if (!goal) return null;
+  const pct = Math.min(100, Math.round((current / goal.valor) * 100));
+  return (
+    <div className="goal-progress">
+      <div className="goal-progress-label"><span>{label} — meta de {currency(goal.valor)}</span><span>{pct}%</span></div>
+      <div className="goal-progress-bar"><div className="goal-progress-fill" style={{ width: `${pct}%` }} /></div>
+    </div>
+  );
+}
+
+function MetasAdmin({ metas, stores, vendors, updateMetas }) {
+  const empty = { id: null, storeId: '', vendorId: '', mes: currentMonthStr(), valor: '' };
+  const [form, setForm] = useState(empty);
+  const [editingId, setEditingId] = useState(null);
+  const storeVendorsForForm = form.storeId ? vendors.filter(v => v.storeId === form.storeId) : [];
+
+  const save = () => {
+    if (!form.storeId || !form.mes || !form.valor) return;
+    const payload = { ...form, vendorId: form.vendorId || null, valor: Number(form.valor) || 0 };
+    if (editingId) updateMetas(current => current.map(m => m.id === editingId ? { ...payload, id: editingId } : m));
+    else updateMetas(current => [...current, { ...payload, id: uid() }]);
+    setForm(empty); setEditingId(null);
+  };
+  const edit = (m) => { setForm({ ...empty, ...m, vendorId: m.vendorId || '', valor: String(m.valor) }); setEditingId(m.id); };
+  const remove = (id) => updateMetas(current => current.filter(m => m.id !== id));
+
+  return (
+    <div>
+      <div className="admin-form">
+        <p className="hint">Cadastre uma meta mensal para a loja inteira (deixe "Vendedor" em branco) ou para um vendedor específico. O progresso aparece automaticamente para o gerente e o representante daquela loja.</p>
+        <label>Loja
+          <select value={form.storeId} onChange={e => setForm({ ...form, storeId: e.target.value, vendorId: '' })}>
+            <option value="">Selecione a loja</option>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </label>
+        <label>Vendedor (opcional — deixe em branco para meta da loja inteira)
+          <select value={form.vendorId} onChange={e => setForm({ ...form, vendorId: e.target.value })} disabled={!form.storeId}>
+            <option value="">Loja inteira</option>
+            {storeVendorsForForm.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </label>
+        <label>Mês
+          <input type="month" value={form.mes} onChange={e => setForm({ ...form, mes: e.target.value })} />
+        </label>
+        <label>Valor da meta (R$)
+          <input type="number" step="0.01" value={form.valor} onChange={e => setForm({ ...form, valor: e.target.value })} placeholder="Ex: 50000" />
+        </label>
+        <div className="admin-form-actions">
+          <button className="btn-primary" onClick={save}>{editingId ? 'Salvar alterações' : 'Adicionar meta'}</button>
+          {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
+        </div>
+      </div>
+      <div className="admin-list">
+        {metas.map(m => (
+          <div key={m.id} className="admin-list-item">
+            <div className="admin-list-info">
+              <div>{stores.find(s => s.id === m.storeId)?.name || '—'} {m.vendorId ? `· ${vendors.find(v => v.id === m.vendorId)?.name || '—'}` : '· Loja inteira'}</div>
+              <div className="muted">{m.mes} · Meta: {currency(m.valor)}</div>
+            </div>
+            <button className="icon-btn" onClick={() => edit(m)}>✎</button>
+            <button className="icon-btn" onClick={() => remove(m.id)}><Trash2 size={16} /></button>
+          </div>
+        ))}
+        {metas.length === 0 && <p className="hint">Nenhuma meta cadastrada ainda.</p>}
+      </div>
+    </div>
+  );
+}
+
+function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder, branding, markCommissionPaid }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -1924,6 +2090,7 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
   const totalVendas = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const totalComissaoLoja = pedidos.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
   const totalComissaoVendedor = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
+  const totalComissaoVendedorPaga = pedidos.filter(o => o.vendorCommissionPaid).reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
   const totalOrcamentos = orcamentosPendentes.reduce((s, o) => s + (Number(o.total) || 0), 0);
 
   const buildDoc = () => {
@@ -1985,12 +2152,14 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
         </label>
         <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
         <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-comissoes.pdf" />
+        <button className="btn-secondary" onClick={() => exportOrdersCSV(filtered, 'pedidos-orcamentos.csv')}><FileText size={16} /> Exportar CSV (Excel)</button>
       </div>
 
       <div className="stats-row">
         <div className="stat-card"><div className="stat-label">Total vendido (pedidos)</div><div className="stat-value">{currency(totalVendas)}</div></div>
-        <div className="stat-card"><div className="stat-label">Comissão lojas</div><div className="stat-value">{currency(totalComissaoLoja)}</div></div>
         <div className="stat-card"><div className="stat-label">Comissão vendedores</div><div className="stat-value">{currency(totalComissaoVendedor)}</div></div>
+        <div className="stat-card"><div className="stat-label">— já paga</div><div className="stat-value">{currency(totalComissaoVendedorPaga)}</div></div>
+        <div className="stat-card"><div className="stat-label">Comissão lojas</div><div className="stat-value">{currency(totalComissaoLoja)}</div></div>
         <div className="stat-card"><div className="stat-label">Em orçamento</div><div className="stat-value">{currency(totalOrcamentos)}</div></div>
       </div>
       <div className="admin-list">
@@ -2004,7 +2173,24 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
             <div className="order-row-values">
               <span>{currency(o.total)}</span>
               <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
-              <span className="muted">Vend.: {currency(o.commissionVendorValue)}</span>
+              {o.status === 'pedido' ? (
+                <span className="muted">
+                  Vend.: {currency(o.commissionVendorValue)}{' '}
+                  <button className={o.vendorCommissionPaid ? 'paid-toggle paid' : 'paid-toggle'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'vendorCommissionPaid', !o.vendorCommissionPaid); }}>
+                    {o.vendorCommissionPaid ? 'Paga' : 'Marcar paga'}
+                  </button>
+                </span>
+              ) : (
+                <span className="muted">Vend.: {currency(o.commissionVendorValue)}</span>
+              )}
+              {o.status === 'pedido' && o.representanteId && (
+                <span className="muted">
+                  Repr.: {currency(o.commissionRepresentanteValue)}{' '}
+                  <button className={o.representanteCommissionPaid ? 'paid-toggle paid' : 'paid-toggle'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'representanteCommissionPaid', !o.representanteCommissionPaid); }}>
+                    {o.representanteCommissionPaid ? 'Paga' : 'Marcar paga'}
+                  </button>
+                </span>
+              )}
               <div style={{ display: 'flex', gap: 6 }}>
                 {o.status === 'orcamento' && (
                   <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
@@ -2468,6 +2654,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .report-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; font-size: 13px; }
 .report-card.footer { background: var(--bg); }
 .report-card.selected { border-color: var(--ink); border-width: 2px; }
+.goal-progress { margin: 8px 0; }
+.goal-progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-bottom: 4px; }
+.goal-progress-bar { background: var(--line); height: 8px; border-radius: 4px; overflow: hidden; }
+.goal-progress-fill { background: var(--clay); height: 100%; border-radius: 4px; }
+.paid-toggle { border: 1px solid var(--line); background: var(--surface); border-radius: 3px; font-size: 10px; padding: 2px 6px; color: var(--ink-soft); cursor: pointer; }
+.paid-toggle.paid { background: var(--ink); color: #fff; border-color: var(--ink); }
 .report-card-title { font-weight: 600; margin-bottom: 6px; }
 .report-card-row { display: flex; justify-content: space-between; padding: 3px 0; gap: 10px; }
 .report-card-row .label { color: var(--ink-soft); }
