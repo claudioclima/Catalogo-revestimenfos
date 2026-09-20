@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar, User, Handshake, Briefcase, ShieldCheck, Weight } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar, User, Handshake, Briefcase, ShieldCheck, Weight, Bell, Mail } from 'lucide-react';
 import { storage } from './storage';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -342,7 +342,7 @@ function ReportPdfButtons({ pdfLibReady, buildDoc, filename }) {
   );
 }
 
-const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding', metas: 'metas' };
+const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding', metas: 'metas', notifications: 'notifications' };
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -355,8 +355,9 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [adminPin, setAdminPin] = useState('1234');
-  const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '' });
+  const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '', companyPhone: '', companyEmail: '' });
   const [metas, setMetas] = useState([]);
+  const [notifications, setNotifications] = useState([]);
 
   const [screen, setScreen] = useState('login');
   const [loginTab, setLoginTab] = useState('vendor');
@@ -411,14 +412,14 @@ export default function App() {
 
   const refreshAll = async () => {
     setRefreshing(true);
-    const [s, v, rep, ger, p, o, pin, br, met] = await Promise.all([
+    const [s, v, rep, ger, p, o, pin, br, met, notif] = await Promise.all([
       loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
-      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '' }),
-      loadKey(STORAGE_KEYS.metas, []),
+      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '', companyPhone: '', companyEmail: '' }),
+      loadKey(STORAGE_KEYS.metas, []), loadKey(STORAGE_KEYS.notifications, []),
     ]);
-    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br); setMetas(met);
+    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br); setMetas(met); setNotifications(notif);
     setRefreshing(false);
-    return { s, v, rep, ger, p, o, pin, br, met };
+    return { s, v, rep, ger, p, o, pin, br, met, notif };
   };
 
   useEffect(() => {
@@ -439,6 +440,12 @@ export default function App() {
     if (ready && (screen === 'admin' || screen === 'repDashboard' || screen === 'gerenteDashboard')) { refreshAll(); }
   }, [screen]);
 
+  useEffect(() => {
+    if (!ready || (screen !== 'repDashboard' && screen !== 'gerenteDashboard')) return;
+    const id = setInterval(() => { refreshAll(); }, 30000);
+    return () => clearInterval(id);
+  }, [ready, screen]);
+
   const mutate = async (key, updater, setter) => {
     let current;
     try {
@@ -456,6 +463,7 @@ export default function App() {
   const mutateRepresentantes = (updater) => mutate(STORAGE_KEYS.representantes, updater, setRepresentantes);
   const mutateGerentes = (updater) => mutate(STORAGE_KEYS.gerentes, updater, setGerentes);
   const mutateMetas = (updater) => mutate(STORAGE_KEYS.metas, updater, setMetas);
+  const mutateNotifications = (updater) => mutate(STORAGE_KEYS.notifications, updater, setNotifications);
 
   const updateMyVendorPin = async (pin) => {
     const next = await mutateVendors(current => current.map(v => v.id === currentVendor.id ? { ...v, pin } : v));
@@ -627,10 +635,19 @@ export default function App() {
     const updated = next.find(o => o.id === orderId);
     if (lastOrder && lastOrder.id === orderId && updated) setLastOrder(updated);
     if (updated) {
+      await mutateNotifications(current => [...current, {
+        id: uid(), storeId: updated.storeId, storeName: updated.storeName, orderId: updated.id,
+        orderNumero: updated.numero, clienteNome: updated.cliente.nome, vendorName: updated.vendorName,
+        total: updated.total, createdAt: now, readRep: false, readGer: false,
+      }]);
       const phone = notifyPhoneForOrder(updated, stores, representantes, gerentes);
       if (phone) {
         const link = conversionWaLink(updated, phone);
         if (link) window.open(link, '_blank');
+      }
+      if (branding?.companyPhone) {
+        const companyLink = conversionWaLink(updated, branding.companyPhone);
+        if (companyLink) window.open(companyLink, '_blank');
       }
     }
   };
@@ -639,6 +656,11 @@ export default function App() {
     const now = paid ? new Date().toISOString() : null;
     const paidAtField = field === 'vendorCommissionPaid' ? 'vendorCommissionPaidAt' : 'representanteCommissionPaidAt';
     await mutateOrders(current => current.map(o => o.id === orderId ? { ...o, [field]: paid, [paidAtField]: now } : o));
+  };
+
+  const markNotificationsRead = async (storeIds, role) => {
+    const field = role === 'rep' ? 'readRep' : 'readGer';
+    await mutateNotifications(current => current.map(n => storeIds.includes(n.storeId) && !n[field] ? { ...n, [field]: true } : n));
   };
 
   const deleteOrder = async (orderId) => {
@@ -750,7 +772,7 @@ export default function App() {
         <CheckoutScreen {...{ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen, editingOrderId, cancelEdit }} />
       )}
       {screen === 'orderSummary' && lastOrder && (
-        <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen: orderSummaryBack, onEdit: startEditOrder }} />
+        <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen: orderSummaryBack, onEdit: startEditOrder, branding }} />
       )}
       {screen === 'quotes' && currentVendor && (
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen, onOpenOrder: (o) => openOrderView(o, 'quotes') }} />
@@ -762,10 +784,10 @@ export default function App() {
         <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'myReport'), branding }} />
       )}
       {screen === 'repDashboard' && currentRepresentante && (
-        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding, setScreen, metas }} />
+        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding, setScreen, metas, notifications, markNotificationsRead }} />
       )}
       {screen === 'gerenteDashboard' && currentGerente && (
-        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard'), branding, setScreen, onSelectVendor: openGerenteVendorView, metas }} />
+        <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard'), branding, setScreen, onSelectVendor: openGerenteVendorView, metas, notifications, markNotificationsRead }} />
       )}
       {screen === 'gerenteVendorDetail' && currentGerente && gerenteVendorView && (
         <GerenteVendorDetailScreen {...{
@@ -1088,9 +1110,17 @@ function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPe
   );
 }
 
-function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen = 'catalog', onEdit }) {
+function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen = 'catalog', onEdit, branding }) {
   const isPedido = order.status === 'pedido';
   const isVendorFlow = backScreen === 'catalog' || backScreen === 'quotes' || backScreen === 'myReport';
+  const mailtoLink = () => {
+    const subject = `${isPedido ? 'Pedido' : 'Orçamento'} nº ${order.numero || '—'} — ${order.storeName}`;
+    const body = [
+      `Loja: ${order.storeName}`, `Vendedor: ${order.vendorName}`, `Cliente: ${order.cliente.nome}`,
+      `Total: ${currency(order.total)}`, '', 'O PDF completo está anexado (baixe pelo botão "Baixar PDF" e anexe aqui).',
+    ].join('\n');
+    return `mailto:${branding?.companyEmail || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
   return (
     <div className="screen">
       <header className="topbar no-print">
@@ -1139,6 +1169,9 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
           <Printer size={16} /> {pdfLibReady ? 'Baixar PDF' : 'Preparando gerador de PDF…'}
         </button>
         <a className="btn-whatsapp" href={waLink(order)} target="_blank" rel="noopener noreferrer"><MessageCircle size={16} /> Enviar por WhatsApp</a>
+        {branding?.companyEmail && (
+          <a className="btn-secondary" href={mailtoLink()}><Mail size={16} /> Enviar por e-mail</a>
+        )}
         <button className="btn-primary" onClick={() => setScreen(backScreen)}>{backScreen === 'catalog' ? 'Novo orçamento' : 'Voltar'}</button>
       </div>
     </div>
@@ -1295,7 +1328,40 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
   );
 }
 
-function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, metas }) {
+function NotificationBell({ notifications, storeIds, role, orders, onOpenOrder, markRead }) {
+  const [open, setOpen] = useState(false);
+  const field = role === 'rep' ? 'readRep' : 'readGer';
+  const mine = notifications.filter(n => storeIds.includes(n.storeId)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const unread = mine.filter(n => !n[field]).length;
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && unread > 0) markRead(storeIds, role);
+  };
+  return (
+    <div className="notif-wrap">
+      <button className="icon-btn" onClick={toggle} title="Notificações">
+        <Bell size={18} />
+        {unread > 0 && <span className="notif-badge">{unread}</span>}
+      </button>
+      {open && (
+        <div className="notif-panel">
+          <div className="notif-panel-title">Pedidos confirmados</div>
+          {mine.length === 0 && <p className="hint">Nenhuma notificação ainda.</p>}
+          {mine.slice(0, 25).map(n => (
+            <div key={n.id} className="notif-item" onClick={() => { const o = orders.find(x => x.id === n.orderId); if (o) { onOpenOrder(o); setOpen(false); } }}>
+              <div><strong>{n.clienteNome}</strong> — {n.storeName}</div>
+              <div className="muted">Vendedor: {n.vendorName} · {currency(n.total)} · nº {n.orderNumero || '—'}</div>
+              <div className="muted">{new Date(n.createdAt).toLocaleString('pt-BR')}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, metas, notifications, markNotificationsRead }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1363,6 +1429,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
         <div><div className="topbar-title">Painel do representante</div><div className="topbar-sub">{currentRepresentante.name}</div></div>
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <NotificationBell notifications={notifications} storeIds={myStoreIds} role="rep" orders={orders} onOpenOrder={onOpenOrder} markRead={markNotificationsRead} />
           <button className="icon-btn" onClick={() => setScreen('repConfig')} title="Configurações"><Settings size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
         </div>
@@ -1440,7 +1507,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   );
 }
 
-function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, onSelectVendor, metas }) {
+function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, onSelectVendor, metas, notifications, markNotificationsRead }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1497,6 +1564,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
         <div><div className="topbar-title">{myStore?.name}</div><div className="topbar-sub">Gerente: {currentGerente.name}</div></div>
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <NotificationBell notifications={notifications} storeIds={[currentGerente.storeId]} role="ger" orders={orders} onOpenOrder={onOpenOrder} markRead={markNotificationsRead} />
           <button className="icon-btn" onClick={() => setScreen('gerConfig')} title="Configurações"><Settings size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
         </div>
@@ -2517,6 +2585,17 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
         </label>
         <button className="btn-primary" onClick={() => updateBranding(form)}>Salvar identidade visual</button>
       </div>
+      <div className="admin-form">
+        <div className="form-subsection" style={{ borderTop: 'none', paddingTop: 0 }}>Contato da empresa para notificações</div>
+        <p className="hint">Sempre que um vendedor confirmar um pedido, além do representante/gerente da loja, o WhatsApp abre também endereçado a este número (se preenchido). O e-mail é usado no botão "Enviar por e-mail" da tela de cada pedido.</p>
+        <label>WhatsApp da empresa
+          <input value={form.companyPhone} onChange={e => setForm({ ...form, companyPhone: e.target.value })} placeholder="(00) 00000-0000" />
+        </label>
+        <label>E-mail da empresa
+          <input type="email" value={form.companyEmail} onChange={e => setForm({ ...form, companyEmail: e.target.value })} placeholder="contato@empresa.com.br" />
+        </label>
+        <button className="btn-primary" onClick={() => updateBranding(form)}>Salvar contato da empresa</button>
+      </div>
     </div>
   );
 }
@@ -2667,6 +2746,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .paid-toggle { border: 1px solid var(--line); background: var(--surface); border-radius: 3px; font-size: 10px; padding: 2px 6px; color: var(--ink-soft); display: inline-block; }
 .paid-toggle.paid { background: var(--ink); color: #fff; border-color: var(--ink); }
 .paid-toggle.a-receber { background: #E8F5E9; color: #2E7D32; border-color: #A5D6A7; font-weight: 600; }
+.notif-wrap { position: relative; }
+.notif-badge { position: absolute; top: -2px; right: -2px; background: #D32F2F; color: #fff; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px; }
+.notif-panel { position: absolute; top: 40px; right: 0; width: 280px; max-height: 360px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); z-index: 50; padding: 8px; }
+.notif-panel-title { font-weight: 600; font-size: 13px; padding: 4px 6px 8px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.notif-item { padding: 8px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.notif-item:hover { background: var(--bg); }
+.notif-item + .notif-item { border-top: 1px solid var(--line); }
 .paid-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .report-card-title { font-weight: 600; margin-bottom: 6px; }
 .report-card-row { display: flex; justify-content: space-between; padding: 3px 0; gap: 10px; }
