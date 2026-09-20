@@ -971,13 +971,13 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
             <div key={p.id} className="product-card">
               <div className="product-photo">
                 {p.photo ? <img src={p.photo} alt={p.name} /> : <div className="photo-placeholder"><Package size={22} /></div>}
-                <button className="add-btn" onClick={() => onAddClick(p.id)}><Plus size={18} /></button>
               </div>
               <div className="product-info">
                 <div className="product-name">{p.name}</div>
                 <div className="product-category">{p.category}</div>
                 {productSpecsLine(p) && <div className="product-specs">{productSpecsLine(p)}</div>}
                 <div className="product-price">{currency(p.price)}</div>
+                <button className="add-btn" onClick={() => onAddClick(p.id)}><ShoppingCart size={18} /></button>
               </div>
             </div>
           ))}
@@ -1278,7 +1278,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
               </div>
               <div className="order-row-values">
                 <span>{currency(o.total)}</span>
-                <span className="muted">Comissão: {currency(o.commissionVendorValue)} {o.vendorCommissionPaid ? <span className="paid-toggle paid" style={{ pointerEvents: 'none' }}>Recebida</span> : <span className="paid-toggle" style={{ pointerEvents: 'none' }}>Pendente</span>}</span>
+                <span className="muted">Comissão: {currency(o.commissionVendorValue)} {o.vendorCommissionPaid ? <span className="paid-toggle paid" style={{ pointerEvents: 'none' }}>Recebida</span> : <span className="paid-toggle a-receber" style={{ pointerEvents: 'none' }}>A receber</span>}</span>
               </div>
             </div>
           ))}
@@ -2593,12 +2593,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .product-photo { aspect-ratio: 1; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
 .product-photo img { width: 100%; height: 100%; object-fit: cover; }
 .photo-placeholder { color: var(--ink-soft); }
-.product-info { padding: 10px 12px; }
+.product-info { padding: 10px 12px; position: relative; }
 .product-name { font-size: 13px; font-weight: 600; line-height: 1.3; }
 .product-category { font-size: 11px; color: var(--ink-soft); margin: 2px 0 2px; }
 .product-specs { font-size: 10px; color: var(--ink-soft); margin: 0 0 6px; }
-.product-price { font-size: 14px; font-weight: 600; color: var(--clay-dark); }
-.add-btn { position: absolute; bottom: 10px; right: 10px; background: rgba(255,255,255,0.94); color: var(--ink); border: none; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,0.22); backdrop-filter: blur(2px); transition: transform 0.15s ease; }
+.product-price { font-size: 14px; font-weight: 600; color: var(--clay-dark); padding-right: 38px; }
+.add-btn { position: absolute; bottom: 6px; right: 10px; background: #2E7D32; color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.25); transition: transform 0.15s ease; }
 .add-btn:active { transform: scale(0.92); }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 24px; color: var(--ink-soft); gap: 10px; text-align: center; }
 .floating-cart { position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 688px; margin: 0 auto; background: var(--ink); color: #fff; padding: 14px 18px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; cursor: pointer; }
@@ -2666,6 +2666,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .goal-progress-fill { background: var(--clay); height: 100%; border-radius: 4px; }
 .paid-toggle { border: 1px solid var(--line); background: var(--surface); border-radius: 3px; font-size: 10px; padding: 2px 6px; color: var(--ink-soft); display: inline-block; }
 .paid-toggle.paid { background: var(--ink); color: #fff; border-color: var(--ink); }
+.paid-toggle.a-receber { background: #E8F5E9; color: #2E7D32; border-color: #A5D6A7; font-weight: 600; }
 .paid-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .report-card-title { font-weight: 600; margin-bottom: 6px; }
 .report-card-row { display: flex; justify-content: space-between; padding: 3px 0; gap: 10px; }
