@@ -2598,7 +2598,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .product-category { font-size: 11px; color: var(--ink-soft); margin: 2px 0 2px; }
 .product-specs { font-size: 10px; color: var(--ink-soft); margin: 0 0 6px; }
 .product-price { font-size: 14px; font-weight: 600; color: var(--clay-dark); }
-.add-btn { position: absolute; bottom: 10px; right: 10px; background: #C9A227; color: #1B1A18; border: none; width: 40px; height: 40px; border-radius: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.25); }
+.add-btn { position: absolute; bottom: 10px; right: 10px; background: rgba(255,255,255,0.94); color: var(--ink); border: none; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,0.22); backdrop-filter: blur(2px); transition: transform 0.15s ease; }
+.add-btn:active { transform: scale(0.92); }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 24px; color: var(--ink-soft); gap: 10px; text-align: center; }
 .floating-cart { position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 688px; margin: 0 auto; background: var(--ink); color: #fff; padding: 14px 18px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; cursor: pointer; }
 .cart-list { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
