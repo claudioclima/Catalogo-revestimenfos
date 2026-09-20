@@ -2588,15 +2588,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .chip-row { display: flex; gap: 8px; padding: 0 16px 8px; overflow-x: auto; }
 .chip { flex: none; background: var(--surface); border: 1px solid var(--line); padding: 6px 12px; border-radius: 20px; font-size: 12px; cursor: pointer; color: var(--ink-soft); white-space: nowrap; }
 .chip.active { background: var(--ink); color: #fff; border-color: var(--ink); }
-.product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 0 16px 90px; }
+.product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 0 16px 90px; align-items: start; }
 .product-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; position: relative; display: flex; flex-direction: column; }
 .product-photo { aspect-ratio: 1; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
 .product-photo img { width: 100%; height: 100%; object-fit: cover; }
 .photo-placeholder { color: var(--ink-soft); }
 .product-info { padding: 10px 12px; position: relative; }
-.product-name { font-size: 13px; font-weight: 600; line-height: 1.3; }
+.product-name { font-size: 13px; font-weight: 600; line-height: 1.3; min-height: 2.6em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .product-category { font-size: 11px; color: var(--ink-soft); margin: 2px 0 2px; }
-.product-specs { font-size: 10px; color: var(--ink-soft); margin: 0 0 6px; }
+.product-specs { font-size: 10px; color: var(--ink-soft); margin: 0 0 6px; min-height: 1.2em; }
 .product-price { font-size: 14px; font-weight: 600; color: var(--clay-dark); padding-right: 38px; }
 .add-btn { position: absolute; bottom: 6px; right: 10px; background: #2E7D32; color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.25); transition: transform 0.15s ease; }
 .add-btn:active { transform: scale(0.92); }
