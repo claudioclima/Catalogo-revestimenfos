@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar, User, Handshake, Briefcase, ShieldCheck, Weight, Bell, Mail } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar, User, Handshake, Briefcase, ShieldCheck, Weight, Bell, Mail, MoreVertical } from 'lucide-react';
 import { storage } from './storage';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -958,6 +958,7 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
   const filtered = products.filter(p => p.active !== false)
     .filter(p => activeCategory === 'Todos' || p.category === activeCategory)
     .filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <div className="screen">
@@ -968,8 +969,15 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
           <button className="icon-btn" onClick={() => setScreen('myReport')} title="Meu relatório de vendas"><BarChart3 size={18} /></button>
           <button className="icon-btn" onClick={() => setScreen('quotes')} title="Meus orçamentos"><FileText size={18} /></button>
           <button className="icon-btn" onClick={() => setScreen('myOrders')} title="Meus pedidos"><Receipt size={18} /></button>
-          <button className="icon-btn" onClick={() => setScreen('vendorConfig')} title="Configurações"><Settings size={18} /></button>
-          <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
+          <div className="notif-wrap">
+            <button className="icon-btn" onClick={() => setMenuOpen(m => !m)} title="Mais opções"><MoreVertical size={18} /></button>
+            {menuOpen && (
+              <div className="notif-panel menu-panel">
+                <button className="menu-item" onClick={() => { setMenuOpen(false); setScreen('vendorConfig'); }}><Settings size={15} /> Configuração do PIN</button>
+                <button className="menu-item" onClick={() => { setMenuOpen(false); logout(); }}><LogOut size={15} /> Sair</button>
+              </div>
+            )}
+          </div>
           <button className="cart-btn" onClick={() => setScreen('cart')}>
             <ShoppingCart size={18} />
             {cartCount > 0 && <span className="badge">{cartCount}</span>}
@@ -2615,7 +2623,8 @@ const STYLES = `
   --teal-dark: #3B3A34;
 }
 * { box-sizing: border-box; }
-.app-root { font-family: 'Inter', sans-serif; color: var(--ink); background: var(--bg); min-height: 100vh; }
+html, body { overflow-x: hidden; max-width: 100vw; }
+.app-root { font-family: 'Inter', sans-serif; color: var(--ink); background: var(--bg); min-height: 100vh; overflow-x: hidden; max-width: 100vw; }
 h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .screen-center { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .login-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 36px 32px; width: 100%; max-width: 380px; }
@@ -2650,10 +2659,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .error { color: var(--clay-dark); font-size: 13px; }
 .hint { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
 .screen { max-width: 720px; margin: 0 auto; min-height: 100vh; background: var(--bg); padding-bottom: 32px; }
-.topbar { display: flex; align-items: center; justify-content: space-between; padding: 16px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
 .topbar-left { display: flex; gap: 8px; }
-.topbar-title { font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
-.topbar-sub { font-size: 12px; color: var(--ink-soft); }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 16px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; gap: 8px; }
+.topbar > div:first-child { min-width: 0; overflow: hidden; }
+.topbar-title { font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-sub { font-size: 12px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-actions { flex-shrink: 0; }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
 .icon-btn { background: none; border: 1px solid var(--line); width: 34px; height: 34px; border-radius: 3px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ink); }
 .icon-btn:disabled { opacity: 0.5; cursor: default; }
@@ -2753,6 +2764,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .notif-item { padding: 8px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
 .notif-item:hover { background: var(--bg); }
 .notif-item + .notif-item { border-top: 1px solid var(--line); }
+.menu-panel { width: 220px; padding: 6px; }
+.menu-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: none; padding: 10px 8px; font-size: 13px; color: var(--ink); cursor: pointer; border-radius: 4px; }
+.menu-item:hover { background: var(--bg); }
+.menu-item + .menu-item { border-top: 1px solid var(--line); }
 .paid-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .report-card-title { font-weight: 600; margin-bottom: 6px; }
 .report-card-row { display: flex; justify-content: space-between; padding: 3px 0; gap: 10px; }
