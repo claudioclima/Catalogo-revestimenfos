@@ -441,7 +441,7 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
-    if (!ready || (screen !== 'repDashboard' && screen !== 'gerenteDashboard')) return;
+    if (!ready || (screen !== 'repDashboard' && screen !== 'gerenteDashboard' && screen !== 'admin')) return;
     const id = setInterval(() => { refreshAll(); }, 30000);
     return () => clearInterval(id);
   }, [ready, screen]);
@@ -638,7 +638,7 @@ export default function App() {
       await mutateNotifications(current => [...current, {
         id: uid(), storeId: updated.storeId, storeName: updated.storeName, orderId: updated.id,
         orderNumero: updated.numero, clienteNome: updated.cliente.nome, vendorName: updated.vendorName,
-        total: updated.total, createdAt: now, readRep: false, readGer: false,
+        total: updated.total, createdAt: now, readRep: false, readGer: false, readAdmin: false,
       }]);
       const phone = notifyPhoneForOrder(updated, stores, representantes, gerentes);
       if (phone) {
@@ -659,7 +659,7 @@ export default function App() {
   };
 
   const markNotificationsRead = async (storeIds, role) => {
-    const field = role === 'rep' ? 'readRep' : 'readGer';
+    const field = role === 'rep' ? 'readRep' : role === 'ger' ? 'readGer' : 'readAdmin';
     await mutateNotifications(current => current.map(n => storeIds.includes(n.storeId) && !n[field] ? { ...n, [field]: true } : n));
   };
 
@@ -772,7 +772,7 @@ export default function App() {
         <CheckoutScreen {...{ checkout, setCheckout, cartSubtotal, descontoRevendaPercent, afterResale, generalDiscountPercent, cartTotal, salvarOrcamento, setScreen, editingOrderId, cancelEdit }} />
       )}
       {screen === 'orderSummary' && lastOrder && (
-        <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen: orderSummaryBack, onEdit: startEditOrder, branding }} />
+        <OrderSummaryScreen {...{ order: lastOrder, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen: orderSummaryBack, onEdit: startEditOrder, branding, stores, representantes, gerentes }} />
       )}
       {screen === 'quotes' && currentVendor && (
         <QuotesScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), convertToPedido, setScreen, onOpenOrder: (o) => openOrderView(o, 'quotes') }} />
@@ -809,7 +809,7 @@ export default function App() {
         <ChangePinScreen title="PIN de acesso do gerente" currentPin={currentGerente.pin} onSave={updateMyGerentePin} setScreen={setScreen} backScreen="gerenteDashboard" />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -1118,16 +1118,24 @@ function CheckoutScreen({ checkout, setCheckout, cartSubtotal, descontoRevendaPe
   );
 }
 
-function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen = 'catalog', onEdit, branding }) {
+function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady, convertToPedido, backScreen = 'catalog', onEdit, branding, stores, representantes, gerentes }) {
   const isPedido = order.status === 'pedido';
   const isVendorFlow = backScreen === 'catalog' || backScreen === 'quotes' || backScreen === 'myReport';
-  const mailtoLink = () => {
+  const store = stores?.find(s => s.id === order.storeId);
+  const rep = store?.representanteId ? representantes?.find(r => r.id === store.representanteId) : null;
+  const ger = gerentes?.find(g => g.storeId === order.storeId);
+  const emailOptions = [
+    rep?.email ? { label: `Representante (${rep.name})`, email: rep.email } : null,
+    ger?.email ? { label: `Gerente (${ger.name})`, email: ger.email } : null,
+    branding?.companyEmail ? { label: 'Empresa', email: branding.companyEmail } : null,
+  ].filter(Boolean);
+  const mailtoLink = (email) => {
     const subject = `${isPedido ? 'Pedido' : 'Orçamento'} nº ${order.numero || '—'} — ${order.storeName}`;
     const body = [
       `Loja: ${order.storeName}`, `Vendedor: ${order.vendorName}`, `Cliente: ${order.cliente.nome}`,
       `Total: ${currency(order.total)}`, '', 'O PDF completo está anexado (baixe pelo botão "Baixar PDF" e anexe aqui).',
     ].join('\n');
-    return `mailto:${branding?.companyEmail || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    return `mailto:${email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
   return (
     <div className="screen">
@@ -1177,9 +1185,9 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
           <Printer size={16} /> {pdfLibReady ? 'Baixar PDF' : 'Preparando gerador de PDF…'}
         </button>
         <a className="btn-whatsapp" href={waLink(order)} target="_blank" rel="noopener noreferrer"><MessageCircle size={16} /> Enviar por WhatsApp</a>
-        {branding?.companyEmail && (
-          <a className="btn-secondary" href={mailtoLink()}><Mail size={16} /> Enviar por e-mail</a>
-        )}
+        {emailOptions.map(opt => (
+          <a key={opt.email} className="btn-secondary" href={mailtoLink(opt.email)}><Mail size={16} /> Enviar por e-mail — {opt.label}</a>
+        ))}
         <button className="btn-primary" onClick={() => setScreen(backScreen)}>{backScreen === 'catalog' ? 'Novo orçamento' : 'Voltar'}</button>
       </div>
     </div>
@@ -1338,7 +1346,7 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
 
 function NotificationBell({ notifications, storeIds, role, orders, onOpenOrder, markRead }) {
   const [open, setOpen] = useState(false);
-  const field = role === 'rep' ? 'readRep' : 'readGer';
+  const field = role === 'rep' ? 'readRep' : role === 'ger' ? 'readGer' : 'readAdmin';
   const mine = notifications.filter(n => storeIds.includes(n.storeId)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const unread = mine.filter(n => !n[field]).length;
   const toggle = () => {
@@ -1685,13 +1693,14 @@ function GerenteVendorDetailScreen({ currentGerente, vendorId, initialPeriod, in
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
+function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
   return (
     <div className="screen">
       <header className="topbar">
         <div className="topbar-title">Administração</div>
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
+          <NotificationBell notifications={notifications} storeIds={stores.map(s => s.id)} role="admin" orders={orders} onOpenOrder={onOpenOrder} markRead={markNotificationsRead} />
           <button className="icon-btn" onClick={() => setScreen('login')}><LogOut size={18} /></button>
         </div>
       </header>
@@ -1937,7 +1946,7 @@ function VendorsAdmin({ vendors, stores, updateVendors }) {
 }
 
 function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
-  const empty = { id: null, name: '', documento: '', telefone: '', endereco: '', banco: '', agencia: '', conta: '', tipoConta: '', pix: '', pin: '' };
+  const empty = { id: null, name: '', documento: '', telefone: '', email: '', endereco: '', banco: '', agencia: '', conta: '', tipoConta: '', pix: '', pin: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
 
@@ -1961,6 +1970,9 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
         </label>
         <label>Telefone
           <input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} placeholder="(00) 00000-0000" />
+        </label>
+        <label>E-mail
+          <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="representante@email.com.br" />
         </label>
         <label>Endereço
           <input value={form.endereco} onChange={e => setForm({ ...form, endereco: e.target.value })} placeholder="Rua, número, cidade, estado" />
@@ -2018,7 +2030,7 @@ function RepresentantesAdmin({ representantes, stores, updateRepresentantes }) {
 }
 
 function GerentesAdmin({ gerentes, stores, updateGerentes }) {
-  const empty = { id: null, name: '', storeId: '', pin: '', telefone: '' };
+  const empty = { id: null, name: '', storeId: '', pin: '', telefone: '', email: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const save = () => {
@@ -2032,7 +2044,7 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
   return (
     <div>
       <div className="admin-form">
-        <p className="hint">O gerente acompanha o desempenho de uma loja específica: faturamento, orçamentos/pedidos e o ranking de vendedores dela. O telefone é usado para receber o aviso automático por WhatsApp quando um pedido é confirmado (caso a loja não tenha representante cadastrado).</p>
+        <p className="hint">O gerente acompanha o desempenho de uma loja específica: faturamento, orçamentos/pedidos e o ranking de vendedores dela. O telefone é usado para receber o aviso automático por WhatsApp quando um pedido é confirmado (caso a loja não tenha representante cadastrado). O e-mail aparece como opção no botão "Enviar por e-mail" de cada pedido dessa loja.</p>
         <label>Nome do gerente
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Ana Paula" />
         </label>
@@ -2044,6 +2056,9 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
         </label>
         <label>Telefone (WhatsApp)
           <input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} placeholder="(00) 00000-0000" />
+        </label>
+        <label>E-mail
+          <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="gerente@loja.com.br" />
         </label>
         <label>PIN de acesso
           <input value={form.pin} onChange={e => setForm({ ...form, pin: e.target.value })} placeholder="Ex: 1234" maxLength={6} />
