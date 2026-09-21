@@ -1604,7 +1604,8 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
   const porVendedor = storeVendors.map(v => {
     const ped = pedidos.filter(o => o.vendorId === v.id);
     const pedValue = ped.reduce((s, o) => s + (Number(o.total) || 0), 0);
-    return { id: v.id, name: v.name, pedCount: ped.length, pedValue };
+    const comissaoLoja = ped.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
+    return { id: v.id, name: v.name, pedCount: ped.length, pedValue, comissaoLoja };
   }).sort((a, b) => b.pedValue - a.pedValue);
   const totPedCount = porVendedor.reduce((s, v) => s + v.pedCount, 0);
   const totPedValue = porVendedor.reduce((s, v) => s + v.pedValue, 0);
@@ -1620,19 +1621,17 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
     ]);
     doc.setFont(undefined, 'bold');
     doc.setFontSize(11);
-    doc.text('Por vendedor', 14, y); y += 6;
+    doc.text('Por vendedor', 14, y); y += 9;
     doc.setFont(undefined, 'normal');
     const cols = [
-      { label: 'Vendedor', width: 70, maxChars: 40 },
-      { label: 'Pedidos', width: 40, align: 'right' },
-      { label: 'Faturamento', width: 50, align: 'right' },
+      { label: 'Vendedor', width: 46, maxChars: 28 },
+      { label: 'Pedidos', width: 26, align: 'right' },
+      { label: 'Faturamento', width: 40, align: 'right' },
+      { label: 'Comissão loja', width: 40, align: 'right' },
     ];
-    const rows = porVendedor.map(v => [v.name, v.pedCount, currency(v.pedValue)]);
-    const totalsRow = ['Total', totPedCount, currency(totPedValue)];
+    const rows = porVendedor.map(v => [v.name, v.pedCount, currency(v.pedValue), currency(v.comissaoLoja)]);
+    const totalsRow = ['Total', totPedCount, currency(totPedValue), currency(comissaoLojaTotal)];
     y = drawPdfTable(doc, 14, y, cols, rows, totalsRow);
-    y += 4;
-    doc.setFontSize(9);
-    doc.text(`Comissão da loja no período: ${currency(comissaoLojaTotal)}`, 14, y); y += 6;
     pdfFooterStamp(doc, branding);
     return doc;
   };
@@ -1673,6 +1672,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
               <div key={v.id} className="report-card">
                 <div className="report-card-title">{v.name}</div>
                 <div className="report-card-row"><span className="label">Pedidos</span><span>{v.pedCount} · {currency(v.pedValue)}</span></div>
+                <div className="report-card-row"><span className="label">Comissão loja</span><span>{currency(v.comissaoLoja)}</span></div>
                 {metaVendedor && <GoalProgress label="Este mês" current={faturamentoVendedorMes} goal={metaVendedor} />}
                 <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => goToVendor(v.id)}>Ver pedidos</button>
               </div>
@@ -1681,6 +1681,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
           {porVendedor.length > 0 && (
             <div className="report-card footer">
               <div className="report-card-row"><span className="label">Total pedidos</span><span>{totPedCount} · {currency(totPedValue)}</span></div>
+              <div className="report-card-row"><span className="label">Comissão total</span><span>{currency(comissaoLojaTotal)}</span></div>
             </div>
           )}
           {porVendedor.length === 0 && <p className="hint">Nenhum vendedor cadastrado para esta loja ainda.</p>}
@@ -2502,7 +2503,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady,
       `Período: ${periodLabel(period, customFrom, customTo)}`,
     ]);
 
-    const sectionTitle = (text) => { doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.text(text, 14, y); y += 6; doc.setFont(undefined, 'normal'); };
+    const sectionTitle = (text) => { doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.text(text, 14, y); y += 9; doc.setFont(undefined, 'normal'); };
 
     sectionTitle('Por vendedor');
     const colsVendedor = [
