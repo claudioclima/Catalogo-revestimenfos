@@ -2243,6 +2243,7 @@ function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady,
   const [period, setPeriod] = useState('todos');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
+  const [drill, setDrill] = useState(null); // null | { type: 'store'|'vendor', id, label }
 
   const vendorOptions = filterStore ? vendors.filter(v => v.storeId === filterStore) : vendors;
   const isPedidoTab = fixedStatus === 'pedido';
@@ -2255,6 +2256,29 @@ function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady,
     if (!isWithinPeriod(o.createdAt, period, customFrom, customTo)) return false;
     return true;
   });
+
+  useEffect(() => { setDrill(null); }, [filterStore, filterVendor, filterRepresentante, period, customFrom, customTo]);
+
+  let cards = [];
+  if (isPedidoTab) {
+    if (filterVendor) {
+      const v = vendors.find(x => x.id === filterVendor);
+      cards = [{ key: filterVendor, type: 'vendor', label: v?.name || '—', count: filtered.length, total: filtered.reduce((s, o) => s + (Number(o.total) || 0), 0) }];
+    } else if (filterStore) {
+      const s = stores.find(x => x.id === filterStore);
+      cards = [{ key: filterStore, type: 'store', label: s?.name || '—', count: filtered.length, total: filtered.reduce((s2, o) => s2 + (Number(o.total) || 0), 0) }];
+    } else {
+      const byStore = {};
+      filtered.forEach(o => {
+        if (!byStore[o.storeId]) byStore[o.storeId] = { key: o.storeId, type: 'store', label: o.storeName, count: 0, total: 0 };
+        byStore[o.storeId].count++;
+        byStore[o.storeId].total += Number(o.total) || 0;
+      });
+      cards = Object.values(byStore).sort((a, b) => b.total - a.total);
+    }
+  }
+  const drilledOrders = drill ? filtered.filter(o => drill.type === 'store' ? o.storeId === drill.id : o.vendorId === drill.id) : [];
+  const listToShow = isPedidoTab ? (drill ? drilledOrders : []) : filtered;
 
   const totalValor = filtered.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const totalComissaoLoja = filtered.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
@@ -2339,49 +2363,72 @@ function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady,
           </>
         )}
       </div>
-      <div className="admin-list">
-        {filtered.map(o => (
-          <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
-            <div>
-              <div><strong>{o.cliente.nome}</strong> — {o.vendorName} ({o.storeName}) <span className="muted">nº {o.numero || '—'}</span></div>
-              <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
+
+      {isPedidoTab && !drill && (
+        <div className="report-cards">
+          {cards.map(c => (
+            <div key={c.key} className="report-card clickable" onClick={() => setDrill({ type: c.type, id: c.key, label: c.label })}>
+              <div className="report-card-title">{c.label}</div>
+              <div className="report-card-row"><span className="label">Pedidos</span><span>{c.count}</span></div>
+              <div className="report-card-row"><span className="label">Faturamento</span><span>{currency(c.total)}</span></div>
             </div>
-            <div className="order-row-values">
-              <span>{currency(o.total)}</span>
-              <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
-              <span className="muted">
-                Vend.: {currency(o.commissionVendorValue)}
-                {isPedidoTab && o.vendorCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
-              </span>
-              {isPedidoTab && o.representanteId && (
+          ))}
+          {cards.length === 0 && <p className="hint">Nenhum pedido encontrado para esse filtro.</p>}
+        </div>
+      )}
+
+      {isPedidoTab && drill && (
+        <div className="drill-header">
+          <button className="icon-btn" onClick={() => setDrill(null)} title="Voltar"><ArrowLeft size={18} /></button>
+          <h3 className="report-heading" style={{ margin: 0 }}>Pedidos — {drill.label}</h3>
+        </div>
+      )}
+
+      {(!isPedidoTab || drill) && (
+        <div className="admin-list">
+          {listToShow.map(o => (
+            <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
+              <div>
+                <div><strong>{o.cliente.nome}</strong> — {o.vendorName} ({o.storeName}) <span className="muted">nº {o.numero || '—'}</span></div>
+                <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
+              </div>
+              <div className="order-row-values">
+                <span>{currency(o.total)}</span>
+                <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
                 <span className="muted">
-                  Repr.: {currency(o.commissionRepresentanteValue)}
-                  {o.representanteCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
+                  Vend.: {currency(o.commissionVendorValue)}
+                  {isPedidoTab && o.vendorCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
                 </span>
-              )}
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                {!isPedidoTab && (
-                  <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
-                )}
-                {isPedidoTab && (
-                  <button className={o.vendorCommissionPaid ? 'btn-secondary small paid-btn active' : 'btn-secondary small paid-btn'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'vendorCommissionPaid', !o.vendorCommissionPaid); }}>
-                    {o.vendorCommissionPaid ? 'Comissão vend. paga' : 'Marcar com. vend. paga'}
-                  </button>
-                )}
                 {isPedidoTab && o.representanteId && (
-                  <button className={o.representanteCommissionPaid ? 'btn-secondary small paid-btn active' : 'btn-secondary small paid-btn'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'representanteCommissionPaid', !o.representanteCommissionPaid); }}>
-                    {o.representanteCommissionPaid ? 'Comissão repr. paga' : 'Marcar com. repr. paga'}
-                  </button>
+                  <span className="muted">
+                    Repr.: {currency(o.commissionRepresentanteValue)}
+                    {o.representanteCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
+                  </span>
                 )}
-                <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apagar este ${isPedidoTab ? 'pedido' : 'orçamento'} de ${o.cliente.nome}? Essa ação não pode ser desfeita.`)) deleteOrder(o.id); }}>
-                  <Trash2 size={14} />
-                </button>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {!isPedidoTab && (
+                    <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
+                  )}
+                  {isPedidoTab && (
+                    <button className={o.vendorCommissionPaid ? 'btn-secondary small paid-btn active' : 'btn-secondary small paid-btn'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'vendorCommissionPaid', !o.vendorCommissionPaid); }}>
+                      {o.vendorCommissionPaid ? 'Comissão vend. paga' : 'Marcar com. vend. paga'}
+                    </button>
+                  )}
+                  {isPedidoTab && o.representanteId && (
+                    <button className={o.representanteCommissionPaid ? 'btn-secondary small paid-btn active' : 'btn-secondary small paid-btn'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'representanteCommissionPaid', !o.representanteCommissionPaid); }}>
+                      {o.representanteCommissionPaid ? 'Comissão repr. paga' : 'Marcar com. repr. paga'}
+                    </button>
+                  )}
+                  <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apagar este ${isPedidoTab ? 'pedido' : 'orçamento'} de ${o.cliente.nome}? Essa ação não pode ser desfeita.`)) deleteOrder(o.id); }}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-        {filtered.length === 0 && <p className="hint">Nenhum registro encontrado para esse filtro.</p>}
-      </div>
+          ))}
+          {listToShow.length === 0 && <p className="hint">Nenhum registro encontrado para esse filtro.</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -2843,6 +2890,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .order-row { display: flex; justify-content: space-between; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; font-size: 13px; gap: 10px; margin-bottom: 8px; }
 .order-row.clickable { cursor: pointer; }
 .order-row.clickable:hover { border-color: var(--ink-soft); }
+.report-card.clickable { cursor: pointer; }
+.report-card.clickable:hover { border-color: var(--ink-soft); }
+.drill-header { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
 .order-row-values { text-align: right; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 .report-heading { font-family: 'Fraunces', serif; font-size: 15px; margin: 20px 0 10px; }
 .report-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
