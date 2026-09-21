@@ -383,6 +383,7 @@ export default function App() {
   const [lastOrder, setLastOrder] = useState(null);
   const [orderSummaryBack, setOrderSummaryBack] = useState('catalog');
   const [gerenteVendorView, setGerenteVendorView] = useState(null);
+  const [repStoreView, setRepStoreView] = useState(null);
   const [adminTab, setAdminTab] = useState('produtos');
 
   const loadKey = async (key, fallback) => {
@@ -629,6 +630,11 @@ export default function App() {
     setScreen('gerenteVendorDetail');
   };
 
+  const openRepStoreView = (storeId, period, customFrom, customTo) => {
+    setRepStoreView({ storeId, period, customFrom, customTo });
+    setScreen('repStoreDetail');
+  };
+
   const convertToPedido = async (orderId) => {
     const now = new Date().toISOString();
     const next = await mutateOrders(current => current.map(o => o.id === orderId ? { ...o, status: 'pedido', convertedAt: now } : o));
@@ -784,7 +790,17 @@ export default function App() {
         <MyReportScreen {...{ orders: orders.filter(o => o.vendorId === currentVendor.id), setScreen, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'myReport'), branding }} />
       )}
       {screen === 'repDashboard' && currentRepresentante && (
-        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding, setScreen, metas, notifications, markNotificationsRead }} />
+        <RepresentanteScreen {...{ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'repDashboard'), branding, setScreen, metas, notifications, markNotificationsRead, onSelectStore: openRepStoreView }} />
+      )}
+      {screen === 'repStoreDetail' && currentRepresentante && repStoreView && (
+        <RepStoreDetailScreen {...{
+          currentRepresentante, stores, orders, setScreen, pdfLibReady, branding,
+          storeId: repStoreView.storeId,
+          initialPeriod: repStoreView.period,
+          initialCustomFrom: repStoreView.customFrom,
+          initialCustomTo: repStoreView.customTo,
+          onOpenOrder: (o) => openOrderView(o, 'repStoreDetail'),
+        }} />
       )}
       {screen === 'gerenteDashboard' && currentGerente && (
         <GerenteScreen {...{ currentGerente, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder: (o) => openOrderView(o, 'gerenteDashboard'), branding, setScreen, onSelectVendor: openGerenteVendorView, metas, notifications, markNotificationsRead }} />
@@ -1313,9 +1329,9 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
 
         <div className="stats-row">
           <div className="stat-card"><div className="stat-label">Pedidos</div><div className="stat-value">{pedidos.length} · {currency(totalPedidos)}</div></div>
-          <div className="stat-card"><div className="stat-label">Minha comissão</div><div className="stat-value">{currency(totalComissao)}</div></div>
+          <div className="stat-card"><div className="stat-label">Minha comissão</div><div className="stat-value green">{currency(totalComissao)}</div></div>
           <div className="stat-card"><div className="stat-label">Já recebida</div><div className="stat-value">{currency(totalComissaoPaga)}</div></div>
-          <div className="stat-card"><div className="stat-label">Saldo a receber</div><div className="stat-value">{currency(totalComissao - totalComissaoPaga)}</div></div>
+          <div className="stat-card"><div className="stat-label">Saldo a receber</div><div className="stat-value green">{currency(totalComissao - totalComissaoPaga)}</div></div>
         </div>
 
         <div className="admin-list">
@@ -1377,17 +1393,16 @@ function NotificationBell({ notifications, storeIds, role, orders, onOpenOrder, 
   );
 }
 
-function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, metas, notifications, markNotificationsRead }) {
+function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, logout, refreshAll, refreshing, pdfLibReady, onOpenOrder, branding, setScreen, metas, notifications, markNotificationsRead, onSelectStore }) {
   const [period, setPeriod] = useState('mes');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-  const [storeFilter, setStoreFilter] = useState('');
   const [expandedStoreId, setExpandedStoreId] = useState(null);
 
   const myStores = stores.filter(s => s.representanteId === currentRepresentante.id);
   const myStoreIds = myStores.map(s => s.id);
   const filtered = orders.filter(o => o.status === 'pedido' && myStoreIds.includes(o.storeId) && isWithinPeriod(o.createdAt, period, customFrom, customTo));
-  const detailedFiltered = filtered.filter(o => !storeFilter || o.storeId === storeFilter).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const totalFaturamento = filtered.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const totalComissaoGeral = filtered.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
 
   const mesAtual = currentMonthStr();
@@ -1403,16 +1418,13 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
   const totalPedCount = porLoja.reduce((s, l) => s + l.pedCount, 0);
   const totalPedValue = porLoja.reduce((s, l) => s + l.pedValue, 0);
 
-  const detFaturamento = detailedFiltered.reduce((s, o) => s + (Number(o.total) || 0), 0);
-  const detComissaoLoja = detailedFiltered.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
-  const detComissaoRep = detailedFiltered.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
+  const goToStore = (storeId) => onSelectStore(storeId, period, customFrom, customTo);
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape' });
-    const storeLabel = storeFilter ? (myStores.find(s => s.id === storeFilter)?.name || '') : 'Todas as lojas';
     let y = pdfHeader(doc, branding, 'Relatório do representante', [
-      `Representante: ${currentRepresentante.name} · Loja: ${storeLabel}`,
+      `Representante: ${currentRepresentante.name} · Todas as lojas`,
       `Período: ${periodLabel(period, customFrom, customTo)}`,
     ]);
     const cols = [
@@ -1423,7 +1435,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
       { label: 'C. loja', width: 36, align: 'right' },
       { label: 'C. repr.', width: 36, align: 'right' },
     ];
-    const rows = detailedFiltered.map(o => [
+    const rows = filtered.map(o => [
       new Date(o.createdAt).toLocaleDateString('pt-BR'), o.storeName, o.cliente.nome,
       currency(o.total), currency(o.commissionStoreValue), currency(o.commissionRepresentanteValue),
     ]);
@@ -1431,9 +1443,8 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
     y += 6;
     if (y + 34 > 190) { doc.addPage(); y = 20; }
     y = pdfTotalsBox(doc, 14, y, 90, [
-      `Faturamento total: ${currency(detFaturamento)}`,
-      `Comissão da loja: ${currency(detComissaoLoja)}`,
-      `Comissão do representante: ${currency(detComissaoRep)}`,
+      `Faturamento total: ${currency(totalFaturamento)}`,
+      `Comissão do representante: ${currency(totalComissaoGeral)}`,
     ]);
     pdfFooterStamp(doc, branding);
     return doc;
@@ -1452,17 +1463,12 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
       </header>
       <div className="form-stack pad">
         <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
-        <label>Loja
-          <select value={storeFilter} onChange={e => setStoreFilter(e.target.value)}>
-            <option value="">Todas as lojas que atendo</option>
-            {myStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </label>
 
         <div className="stats-row">
           <div className="stat-card"><div className="stat-label">Lojas atendidas</div><div className="stat-value">{myStores.length}</div></div>
           <div className="stat-card"><div className="stat-label">Pedidos convertidos</div><div className="stat-value">{filtered.length}</div></div>
-          <div className="stat-card"><div className="stat-label">Minha comissão total</div><div className="stat-value">{currency(totalComissaoGeral)}</div></div>
+          <div className="stat-card"><div className="stat-label">Faturamento</div><div className="stat-value">{currency(totalFaturamento)}</div></div>
+          <div className="stat-card"><div className="stat-label">Minha comissão total</div><div className="stat-value green">{currency(totalComissaoGeral)}</div></div>
         </div>
 
         <h3 className="report-heading">Por loja</h3>
@@ -1471,15 +1477,18 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
             <div key={l.id} className="report-card">
               <div className="report-card-title">{l.name}</div>
               <div className="report-card-row"><span className="label">Pedidos</span><span>{l.pedCount} · {currency(l.pedValue)}</span></div>
-              <div className="report-card-row"><span className="label">Comissão</span><span>{currency(l.comissao)}</span></div>
+              <div className="report-card-row"><span className="label">Minha comissão</span><span className="green">{currency(l.comissao)}</span></div>
               {l.meta && <GoalProgress label="Este mês" current={l.faturamentoMes} goal={l.meta} />}
-              <button className="btn-secondary small" style={{ marginTop: 8 }} onClick={() => setExpandedStoreId(expandedStoreId === l.id ? null : l.id)}><TrendingUp size={13} /> Ranking</button>
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <button className="btn-secondary small" onClick={() => setExpandedStoreId(expandedStoreId === l.id ? null : l.id)}><TrendingUp size={13} /> Ranking</button>
+                <button className="btn-secondary small" onClick={() => goToStore(l.id)}>Ver pedidos</button>
+              </div>
             </div>
           ))}
           {porLoja.length > 0 && (
             <div className="report-card footer">
               <div className="report-card-row"><span className="label">Total pedidos</span><span>{totalPedCount} · {currency(totalPedValue)}</span></div>
-              <div className="report-card-row"><span className="label">Comissão total</span><span>{currency(totalComissaoGeral)}</span></div>
+              <div className="report-card-row"><span className="label">Comissão total</span><span className="green">{currency(totalComissaoGeral)}</span></div>
             </div>
           )}
           {porLoja.length === 0 && <p className="hint">Nenhuma loja vinculada a você ainda.</p>}
@@ -1495,29 +1504,76 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
           </div>
         )}
 
-        <h3 className="report-heading">Pedidos {storeFilter ? `— ${myStores.find(s => s.id === storeFilter)?.name}` : '(todas as lojas)'}</h3>
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-representante.pdf" />
+      </div>
+    </div>
+  );
+}
+
+function RepStoreDetailScreen({ currentRepresentante, storeId, initialPeriod, initialCustomFrom, initialCustomTo, stores, orders, setScreen, pdfLibReady, branding, onOpenOrder }) {
+  const [period, setPeriod] = useState(initialPeriod || 'mes');
+  const [customFrom, setCustomFrom] = useState(initialCustomFrom || '');
+  const [customTo, setCustomTo] = useState(initialCustomTo || '');
+
+  const store = stores.find(s => s.id === storeId);
+  const pedidos = orders.filter(o => o.status === 'pedido' && o.storeId === storeId && isWithinPeriod(o.createdAt, period, customFrom, customTo))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const faturamentoTotal = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const comissaoTotal = pedidos.reduce((s, o) => s + (Number(o.commissionRepresentanteValue) || 0), 0);
+
+  const buildDoc = () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    let y = pdfHeader(doc, branding, `Relatório — ${store?.name || ''}`, [
+      `Representante: ${currentRepresentante.name}`,
+      `Período: ${periodLabel(period, customFrom, customTo)}`,
+    ]);
+    const cols = [
+      { label: 'Data', width: 30 },
+      { label: 'Cliente', width: 70, maxChars: 36 },
+      { label: 'Total', width: 40, align: 'right' },
+      { label: 'Minha comissão', width: 40, align: 'right' },
+    ];
+    const rows = pedidos.map(o => [new Date(o.createdAt).toLocaleDateString('pt-BR'), o.cliente.nome, currency(o.total), currency(o.commissionRepresentanteValue)]);
+    y = drawPdfTable(doc, 14, y, cols, rows);
+    y += 6;
+    if (y + 24 > 280) { doc.addPage(); y = 20; }
+    y = pdfTotalsBox(doc, 124, y, 70, [`Pedidos: ${pedidos.length}`, `Faturamento: ${currency(faturamentoTotal)}`, `Minha comissão: ${currency(comissaoTotal)}`]);
+    pdfFooterStamp(doc, branding);
+    return doc;
+  };
+
+  return (
+    <div className="screen">
+      <header className="topbar">
+        <button className="icon-btn" onClick={() => setScreen('repDashboard')} title="Voltar"><ArrowLeft size={18} /></button>
+        <div className="topbar-title">{store?.name || 'Loja'}</div>
+        <div style={{ width: 34 }} />
+      </header>
+      <div className="form-stack pad">
+        <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
+        <div className="stats-row">
+          <div className="stat-card"><div className="stat-label">Pedidos</div><div className="stat-value">{pedidos.length}</div></div>
+          <div className="stat-card"><div className="stat-label">Faturamento</div><div className="stat-value">{currency(faturamentoTotal)}</div></div>
+          <div className="stat-card"><div className="stat-label">Minha comissão</div><div className="stat-value green">{currency(comissaoTotal)}</div></div>
+        </div>
+        <h3 className="report-heading">Pedidos de {store?.name}</h3>
         <div className="admin-list">
-          {detailedFiltered.map(o => (
+          {pedidos.map(o => (
             <div key={o.id} className="order-row clickable" onClick={() => onOpenOrder(o)}>
               <div>
-                <div><strong>{o.cliente.nome}</strong> — {o.storeName} <span className="muted">nº {o.numero || '—'}</span></div>
+                <div><strong>{o.cliente.nome}</strong> — {o.vendorName} <span className="muted">nº {o.numero || '—'}</span></div>
                 <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
               </div>
               <div className="order-row-values">
                 <span>{currency(o.total)}</span>
-                <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
-                <span className="muted">Minha: {currency(o.commissionRepresentanteValue)}</span>
+                <span className="muted green">Minha: {currency(o.commissionRepresentanteValue)}</span>
               </div>
             </div>
           ))}
-          {detailedFiltered.length === 0 && <p className="hint">Nenhum pedido para esse filtro.</p>}
+          {pedidos.length === 0 && <p className="hint">Nenhum pedido dessa loja nesse período.</p>}
         </div>
-        {detailedFiltered.length > 0 && (
-          <div className="stat-card total-footer">
-            <strong>Faturamento total:</strong> {currency(detFaturamento)} · <strong>Comissão da loja:</strong> {currency(detComissaoLoja)} · <strong>Minha comissão:</strong> {currency(detComissaoRep)}
-          </div>
-        )}
-        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-representante.pdf" />
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename={`relatorio-${(store?.name || 'loja').replace(/\s+/g, '-').toLowerCase()}.pdf`} />
       </div>
     </div>
   );
@@ -2754,6 +2810,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .stat-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px; }
 .stat-label { font-size: 11px; color: var(--ink-soft); }
 .stat-value { font-size: 18px; font-weight: 700; margin-top: 4px; }
+.stat-value.green, .green { color: #2E7D32; }
 .stat-card.total-footer { font-size: 13px; }
 .order-row { display: flex; justify-content: space-between; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; font-size: 13px; gap: 10px; margin-bottom: 8px; }
 .order-row.clickable { cursor: pointer; }
