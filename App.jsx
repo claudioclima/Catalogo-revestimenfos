@@ -384,7 +384,7 @@ export default function App() {
   const [orderSummaryBack, setOrderSummaryBack] = useState('catalog');
   const [gerenteVendorView, setGerenteVendorView] = useState(null);
   const [repStoreView, setRepStoreView] = useState(null);
-  const [adminTab, setAdminTab] = useState('produtos');
+  const [adminTab, setAdminTab] = useState('pedidos');
 
   const loadKey = async (key, fallback) => {
     try {
@@ -1750,27 +1750,45 @@ function GerenteVendorDetailScreen({ currentGerente, vendorId, initialPeriod, in
 }
 
 function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
+  const cadastroTabs = ['produtos', 'lojas', 'vendedores', 'representantes', 'gerentes', 'metas', 'config'];
+  const isCadastroTab = cadastroTabs.includes(adminTab);
+  const allStoreIds = stores.map(s => s.id);
+  const unreadPedidos = notifications.filter(n => allStoreIds.includes(n.storeId) && !n.readAdmin).length;
+
+  const goToPedidos = () => {
+    setAdminTab('pedidos');
+    if (unreadPedidos > 0) markNotificationsRead(allStoreIds, 'admin');
+  };
+
   return (
     <div className="screen">
       <header className="topbar">
         <div className="topbar-title">Administração</div>
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
-          <NotificationBell notifications={notifications} storeIds={stores.map(s => s.id)} role="admin" orders={orders} onOpenOrder={onOpenOrder} markRead={markNotificationsRead} />
+          <div className="notif-wrap">
+            <button className={adminTab === 'pedidos' ? 'icon-btn active' : 'icon-btn'} onClick={goToPedidos} title="Pedidos">
+              <Receipt size={18} />
+              {unreadPedidos > 0 && <span className="notif-badge">{unreadPedidos}</span>}
+            </button>
+          </div>
+          <button className={adminTab === 'orcamentos' ? 'icon-btn active' : 'icon-btn'} onClick={() => setAdminTab('orcamentos')} title="Orçamentos"><FileText size={18} /></button>
+          <button className={adminTab === 'relatorios' ? 'icon-btn active' : 'icon-btn'} onClick={() => setAdminTab('relatorios')} title="Relatórios"><BarChart3 size={18} /></button>
+          <button className={isCadastroTab ? 'icon-btn active' : 'icon-btn'} onClick={() => setAdminTab('produtos')} title="Cadastros"><Settings size={18} /></button>
           <button className="icon-btn" onClick={() => setScreen('login')}><LogOut size={18} /></button>
         </div>
       </header>
-      <div className="tabs wrap">
-        <button className={adminTab === 'produtos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('produtos')}><Package size={14} /> Produtos</button>
-        <button className={adminTab === 'lojas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('lojas')}><Store size={14} /> Lojas</button>
-        <button className={adminTab === 'vendedores' ? 'tab active' : 'tab'} onClick={() => setAdminTab('vendedores')}><Users size={14} /> Vendedores</button>
-        <button className={adminTab === 'representantes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('representantes')}><UserCog size={14} /> Representantes</button>
-        <button className={adminTab === 'gerentes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('gerentes')}><UserCog size={14} /> Gerentes</button>
-        <button className={adminTab === 'metas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('metas')}><TrendingUp size={14} /> Metas</button>
-        <button className={adminTab === 'pedidos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('pedidos')}><Receipt size={14} /> Orçamentos/Pedidos</button>
-        <button className={adminTab === 'relatorios' ? 'tab active' : 'tab'} onClick={() => setAdminTab('relatorios')}><BarChart3 size={14} /> Relatórios</button>
-        <button className={adminTab === 'config' ? 'tab active' : 'tab'} onClick={() => setAdminTab('config')}><Settings size={14} /> Config</button>
-      </div>
+      {isCadastroTab && (
+        <div className="tabs wrap">
+          <button className={adminTab === 'produtos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('produtos')}><Package size={14} /> Produtos</button>
+          <button className={adminTab === 'lojas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('lojas')}><Store size={14} /> Lojas</button>
+          <button className={adminTab === 'vendedores' ? 'tab active' : 'tab'} onClick={() => setAdminTab('vendedores')}><Users size={14} /> Vendedores</button>
+          <button className={adminTab === 'representantes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('representantes')}><UserCog size={14} /> Representantes</button>
+          <button className={adminTab === 'gerentes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('gerentes')}><UserCog size={14} /> Gerentes</button>
+          <button className={adminTab === 'metas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('metas')}><TrendingUp size={14} /> Metas</button>
+          <button className={adminTab === 'config' ? 'tab active' : 'tab'} onClick={() => setAdminTab('config')}><Settings size={14} /> Config</button>
+        </div>
+      )}
       <div className="admin-body">
         {adminTab === 'produtos' && <ProductsAdmin products={products} saveProduct={saveProduct} deleteProductById={deleteProductById} />}
         {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
@@ -1778,7 +1796,8 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
         {adminTab === 'gerentes' && <GerentesAdmin gerentes={gerentes} stores={stores} updateGerentes={updateGerentes} />}
         {adminTab === 'metas' && <MetasAdmin metas={metas} stores={stores} vendors={vendors} updateMetas={updateMetas} />}
-        {adminTab === 'pedidos' && <OrdersAdmin orders={orders} stores={stores} vendors={vendors} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} />}
+        {adminTab === 'pedidos' && <OrdersListAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} fixedStatus="pedido" />}
+        {adminTab === 'orcamentos' && <OrdersListAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} fixedStatus="orcamento" />}
         {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} branding={branding} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} branding={branding} updateBranding={updateBranding} />}
       </div>
@@ -2217,62 +2236,63 @@ function MetasAdmin({ metas, stores, vendors, updateMetas }) {
   );
 }
 
-function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder, branding, markCommissionPaid }) {
+function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder, branding, markCommissionPaid, fixedStatus }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
+  const [filterRepresentante, setFilterRepresentante] = useState('');
   const [period, setPeriod] = useState('todos');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
 
   const vendorOptions = filterStore ? vendors.filter(v => v.storeId === filterStore) : vendors;
+  const isPedidoTab = fixedStatus === 'pedido';
 
   const filtered = orders.filter(o => {
+    if (o.status !== fixedStatus) return false;
     if (filterStore && o.storeId !== filterStore) return false;
     if (filterVendor && o.vendorId !== filterVendor) return false;
-    if (filterStatus && o.status !== filterStatus) return false;
+    if (filterRepresentante && o.representanteId !== filterRepresentante) return false;
     if (!isWithinPeriod(o.createdAt, period, customFrom, customTo)) return false;
     return true;
   });
 
-  const pedidos = filtered.filter(o => o.status === 'pedido');
-  const orcamentosPendentes = filtered.filter(o => o.status === 'orcamento');
-  const totalVendas = pedidos.reduce((s, o) => s + (Number(o.total) || 0), 0);
-  const totalComissaoLoja = pedidos.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
-  const totalComissaoVendedor = pedidos.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
-  const totalComissaoVendedorPaga = pedidos.filter(o => o.vendorCommissionPaid).reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
-  const totalOrcamentos = orcamentosPendentes.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalValor = filtered.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalComissaoLoja = filtered.reduce((s, o) => s + (Number(o.commissionStoreValue) || 0), 0);
+  const totalComissaoVendedor = filtered.reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
+  const totalComissaoVendedorPaga = filtered.filter(o => o.vendorCommissionPaid).reduce((s, o) => s + (Number(o.commissionVendorValue) || 0), 0);
 
   const buildDoc = () => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape' });
     const storeName = filterStore ? (stores.find(s => s.id === filterStore)?.name || '') : 'Todas as lojas';
     const vendorName = filterVendor ? (vendors.find(v => v.id === filterVendor)?.name || '') : 'Todos os vendedores';
-    let y = pdfHeader(doc, branding, 'Relatório de pedidos e comissões', [
-      `Loja: ${storeName} · Vendedor: ${vendorName}`,
+    const repName = filterRepresentante ? (representantes.find(r => r.id === filterRepresentante)?.name || '') : 'Todos os representantes';
+    let y = pdfHeader(doc, branding, isPedidoTab ? 'Relatório de pedidos e comissões' : 'Relatório de orçamentos', [
+      `Loja: ${storeName} · Vendedor: ${vendorName} · Representante: ${repName}`,
       `Período: ${periodLabel(period, customFrom, customTo)}`,
     ]);
     const cols = [
       { label: 'Data', width: 24 },
-      { label: 'Cliente', width: 44, maxChars: 26 },
-      { label: 'Vendedor', width: 40, maxChars: 24 },
-      { label: 'Status', width: 26 },
+      { label: 'Cliente', width: 50, maxChars: 28 },
+      { label: 'Vendedor', width: 44, maxChars: 26 },
       { label: 'Total', width: 34, align: 'right' },
       { label: 'C. loja', width: 34, align: 'right' },
       { label: 'C. vend.', width: 34, align: 'right' },
     ];
     const rows = filtered.map(o => [
-      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.cliente.nome, o.vendorName, o.status === 'pedido' ? 'Pedido' : 'Orçamento',
+      new Date(o.createdAt).toLocaleDateString('pt-BR'), o.cliente.nome, o.vendorName,
       currency(o.total), currency(o.commissionStoreValue), currency(o.commissionVendorValue),
     ]);
     y = drawPdfTable(doc, 14, y, cols, rows);
     y += 6;
-    if (y + 40 > 190) { doc.addPage(); y = 20; }
-    y = pdfTotalsBox(doc, 14, y, 100, [
-      `Total vendido (pedidos): ${currency(totalVendas)}`,
+    if (y + 34 > 190) { doc.addPage(); y = 20; }
+    y = pdfTotalsBox(doc, 14, y, 100, isPedidoTab ? [
+      `Total vendido: ${currency(totalValor)}`,
       `Comissão lojas: ${currency(totalComissaoLoja)}`,
       `Comissão vendedores: ${currency(totalComissaoVendedor)}`,
-      `Em orçamento (não convertido): ${currency(totalOrcamentos)}`,
+    ] : [
+      `Total em orçamento: ${currency(totalValor)}`,
+      `Quantidade: ${filtered.length}`,
     ]);
     pdfFooterStamp(doc, branding);
     return doc;
@@ -2293,24 +2313,31 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
             {vendorOptions.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
         </label>
-        <label>Status
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">Todos (orçamentos e pedidos)</option>
-            <option value="orcamento">Só orçamentos</option>
-            <option value="pedido">Só pedidos</option>
+        <label>Representante
+          <select value={filterRepresentante} onChange={e => setFilterRepresentante(e.target.value)}>
+            <option value="">Todos os representantes</option>
+            {representantes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
         </label>
         <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
-        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="relatorio-comissoes.pdf" />
-        <button className="btn-secondary" onClick={() => exportOrdersCSV(filtered, 'pedidos-orcamentos.csv')}><FileText size={16} /> Exportar CSV (Excel)</button>
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename={isPedidoTab ? 'relatorio-pedidos.pdf' : 'relatorio-orcamentos.pdf'} />
+        <button className="btn-secondary" onClick={() => exportOrdersCSV(filtered, isPedidoTab ? 'pedidos.csv' : 'orcamentos.csv')}><FileText size={16} /> Exportar CSV (Excel)</button>
       </div>
 
       <div className="stats-row">
-        <div className="stat-card"><div className="stat-label">Total vendido (pedidos)</div><div className="stat-value">{currency(totalVendas)}</div></div>
-        <div className="stat-card"><div className="stat-label">Comissão vendedores</div><div className="stat-value">{currency(totalComissaoVendedor)}</div></div>
-        <div className="stat-card"><div className="stat-label">— já paga</div><div className="stat-value">{currency(totalComissaoVendedorPaga)}</div></div>
-        <div className="stat-card"><div className="stat-label">Comissão lojas</div><div className="stat-value">{currency(totalComissaoLoja)}</div></div>
-        <div className="stat-card"><div className="stat-label">Em orçamento</div><div className="stat-value">{currency(totalOrcamentos)}</div></div>
+        {isPedidoTab ? (
+          <>
+            <div className="stat-card"><div className="stat-label">Total vendido</div><div className="stat-value">{currency(totalValor)}</div></div>
+            <div className="stat-card"><div className="stat-label">Comissão vendedores</div><div className="stat-value">{currency(totalComissaoVendedor)}</div></div>
+            <div className="stat-card"><div className="stat-label">— já paga</div><div className="stat-value">{currency(totalComissaoVendedorPaga)}</div></div>
+            <div className="stat-card"><div className="stat-label">Comissão lojas</div><div className="stat-value">{currency(totalComissaoLoja)}</div></div>
+          </>
+        ) : (
+          <>
+            <div className="stat-card"><div className="stat-label">Total em orçamento</div><div className="stat-value">{currency(totalValor)}</div></div>
+            <div className="stat-card"><div className="stat-label">Quantidade</div><div className="stat-value">{filtered.length}</div></div>
+          </>
+        )}
       </div>
       <div className="admin-list">
         {filtered.map(o => (
@@ -2318,36 +2345,35 @@ function OrdersAdmin({ orders, stores, vendors, pdfLibReady, convertToPedido, de
             <div>
               <div><strong>{o.cliente.nome}</strong> — {o.vendorName} ({o.storeName}) <span className="muted">nº {o.numero || '—'}</span></div>
               <div className="muted">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
-              <span className={o.status === 'pedido' ? 'status-badge status-pedido' : 'status-badge status-orcamento'}>{o.status === 'pedido' ? 'Pedido' : 'Orçamento'}</span>
             </div>
             <div className="order-row-values">
               <span>{currency(o.total)}</span>
               <span className="muted">Loja: {currency(o.commissionStoreValue)}</span>
               <span className="muted">
                 Vend.: {currency(o.commissionVendorValue)}
-                {o.status === 'pedido' && o.vendorCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
+                {isPedidoTab && o.vendorCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
               </span>
-              {o.status === 'pedido' && o.representanteId && (
+              {isPedidoTab && o.representanteId && (
                 <span className="muted">
                   Repr.: {currency(o.commissionRepresentanteValue)}
                   {o.representanteCommissionPaid && <span className="paid-toggle paid" style={{ pointerEvents: 'none', marginLeft: 6 }}>Paga</span>}
                 </span>
               )}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                {o.status === 'orcamento' && (
+                {!isPedidoTab && (
                   <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); const missing = getMissingFields(o); if (missing.length) { window.alert(`Preencha antes de gerar o pedido: ${missing.join(', ')}.`); return; } convertToPedido(o.id); }}><CheckCircle2 size={14} /> Converter</button>
                 )}
-                {o.status === 'pedido' && (
+                {isPedidoTab && (
                   <button className={o.vendorCommissionPaid ? 'btn-secondary small paid-btn active' : 'btn-secondary small paid-btn'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'vendorCommissionPaid', !o.vendorCommissionPaid); }}>
                     {o.vendorCommissionPaid ? 'Comissão vend. paga' : 'Marcar com. vend. paga'}
                   </button>
                 )}
-                {o.status === 'pedido' && o.representanteId && (
+                {isPedidoTab && o.representanteId && (
                   <button className={o.representanteCommissionPaid ? 'btn-secondary small paid-btn active' : 'btn-secondary small paid-btn'} onClick={(e) => { e.stopPropagation(); markCommissionPaid(o.id, 'representanteCommissionPaid', !o.representanteCommissionPaid); }}>
                     {o.representanteCommissionPaid ? 'Comissão repr. paga' : 'Marcar com. repr. paga'}
                   </button>
                 )}
-                <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apagar este ${o.status === 'pedido' ? 'pedido' : 'orçamento'} de ${o.cliente.nome}? Essa ação não pode ser desfeita.`)) deleteOrder(o.id); }}>
+                <button className="btn-secondary small" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apagar este ${isPedidoTab ? 'pedido' : 'orçamento'} de ${o.cliente.nome}? Essa ação não pode ser desfeita.`)) deleteOrder(o.id); }}>
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -2374,6 +2400,7 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady,
   const filteredOrders = orders.filter(o => {
     if (filterStore && o.storeId !== filterStore) return false;
     if (filterVendor && o.vendorId !== filterVendor) return false;
+    if (filterRepresentante && o.representanteId !== filterRepresentante) return false;
     if (!isWithinPeriod(o.createdAt, period, customFrom, customTo)) return false;
     return true;
   });
@@ -2739,6 +2766,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
 .icon-btn { background: none; border: 1px solid var(--line); width: 34px; height: 34px; border-radius: 3px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ink); }
 .icon-btn:disabled { opacity: 0.5; cursor: default; }
+.icon-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .spin { animation: spin-anim 1s linear infinite; }
 @keyframes spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .cart-btn { position: relative; background: var(--ink); color: #fff; border: none; width: 34px; height: 34px; border-radius: 3px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
