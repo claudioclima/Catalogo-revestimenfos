@@ -2756,7 +2756,12 @@ html, body { overflow-x: hidden; max-width: 100vw; }
 .app-root { font-family: 'Inter', sans-serif; color: var(--ink); background: var(--bg); min-height: 100vh; overflow-x: hidden; max-width: 100vw; }
 h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .screen-center { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: #1B1A18; }
-.login-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 36px 32px; width: 100%; max-width: 380px; }
+.login-card { background: #1B1A18; border: 1px solid #33322E; border-radius: 4px; padding: 36px 32px; width: 100%; max-width: 380px; }
+.login-card .login-header h1 { color: #F5F3EE; }
+.login-card .login-header p { color: #9A9789; }
+.login-card .form-stack label { color: #B5B2A5; }
+.login-card input, .login-card select, .login-card textarea { background: #2A2A27; border-color: #46453F; color: #F5F3EE; }
+.login-card .hint { color: #8B8879; }
 .login-header { text-align: left; margin-bottom: 24px; }
 .tile-mark { display: grid; grid-template-columns: repeat(2, 14px); grid-template-rows: repeat(2, 14px); gap: 3px; margin-bottom: 16px; }
 .login-logo { max-width: 260px; max-height: 130px; width: 100%; object-fit: contain; object-position: left; margin-bottom: 20px; }
@@ -2767,9 +2772,10 @@ h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
 .tabs.wrap { flex-wrap: wrap; padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .tabs.login-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; border-bottom: none; margin-bottom: 24px; }
-.tabs.login-tabs .tab { flex-direction: column; align-items: center; gap: 5px; padding: 12px 4px; border: 1px solid var(--line); border-radius: 4px; border-bottom: 1px solid var(--line); color: var(--ink-soft); }
+.tabs.login-tabs .tab { flex-direction: column; align-items: center; gap: 5px; padding: 12px 4px; border: 1px solid #46453F; border-radius: 4px; color: #B5B2A5; }
 .tabs.login-tabs .tab span { font-size: 10px; font-weight: 500; letter-spacing: 0.01em; }
-.tabs.login-tabs .tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.tabs.login-tabs .tab.active { background: #F5F3EE; color: #1B1A18; border-color: #F5F3EE; }
+.login-card .btn-primary { background: #F5F3EE; color: #1B1A18; }
 .tab { flex: none; background: none; border: none; padding: 10px 14px; font-size: 13px; font-weight: 500; color: var(--ink-soft); cursor: pointer; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px; }
 .tab.active { color: var(--ink); border-bottom-color: var(--clay); }
 .form-stack { display: flex; flex-direction: column; gap: 14px; }
