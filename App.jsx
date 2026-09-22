@@ -2755,7 +2755,7 @@ const STYLES = `
 html, body { overflow-x: hidden; max-width: 100vw; }
 .app-root { font-family: 'Inter', sans-serif; color: var(--ink); background: var(--bg); min-height: 100vh; overflow-x: hidden; max-width: 100vw; }
 h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
-.screen-center { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.screen-center { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: #1B1A18; }
 .login-card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 36px 32px; width: 100%; max-width: 380px; }
 .login-header { text-align: left; margin-bottom: 24px; }
 .tile-mark { display: grid; grid-template-columns: repeat(2, 14px); grid-template-rows: repeat(2, 14px); gap: 3px; margin-bottom: 16px; }
