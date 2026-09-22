@@ -417,11 +417,35 @@ export default function App() {
     return results.filter(Boolean);
   };
 
+  const loadBranding = async () => {
+    const [info, logo, logoPdf] = await Promise.all([
+      loadKey('brandingInfo', null), loadKey('brandingLogo', null), loadKey('brandingLogoPdf', null),
+    ]);
+    if (info === null && logo === null && logoPdf === null) {
+      // Primeira vez com o novo formato: migra o registro único antigo, separando cada logo.
+      const legacy = await loadKey(STORAGE_KEYS.branding, null);
+      const infoPart = { companyName: legacy?.companyName || '', footerText: legacy?.footerText || '', companyPhone: legacy?.companyPhone || '', companyEmail: legacy?.companyEmail || '' };
+      const logoPart = { logo: legacy?.logo || '', logoW: legacy?.logoW || 0, logoH: legacy?.logoH || 0 };
+      const logoPdfPart = { logoPdf: legacy?.logoPdf || '', logoPdfW: legacy?.logoPdfW || 0, logoPdfH: legacy?.logoPdfH || 0 };
+      await Promise.all([
+        storage.set('brandingInfo', JSON.stringify(infoPart)).catch(() => {}),
+        storage.set('brandingLogo', JSON.stringify(logoPart)).catch(() => {}),
+        storage.set('brandingLogoPdf', JSON.stringify(logoPdfPart)).catch(() => {}),
+      ]);
+      return { ...infoPart, ...logoPart, ...logoPdfPart };
+    }
+    return {
+      companyName: info?.companyName || '', footerText: info?.footerText || '', companyPhone: info?.companyPhone || '', companyEmail: info?.companyEmail || '',
+      logo: logo?.logo || '', logoW: logo?.logoW || 0, logoH: logo?.logoH || 0,
+      logoPdf: logoPdf?.logoPdf || '', logoPdfW: logoPdf?.logoPdfW || 0, logoPdfH: logoPdf?.logoPdfH || 0,
+    };
+  };
+
   const refreshAll = async () => {
     setRefreshing(true);
     const [s, v, rep, ger, p, o, pin, br, met, notif] = await Promise.all([
       loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
-      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadKey(STORAGE_KEYS.branding, { logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '', companyPhone: '', companyEmail: '' }),
+      loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadBranding(),
       loadKey(STORAGE_KEYS.metas, []), loadKey(STORAGE_KEYS.notifications, []),
     ]);
     setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br); setMetas(met); setNotifications(notif);
@@ -505,7 +529,18 @@ export default function App() {
   };
   const mutateOrders = (updater) => mutate(STORAGE_KEYS.orders, updater, setOrders);
   const mutateAdminPin = (pin) => { setAdminPin(pin); storage.set(STORAGE_KEYS.adminPin, JSON.stringify(pin)).catch(() => {}); };
-  const updateBranding = (next) => { setBranding(next); storage.set(STORAGE_KEYS.branding, JSON.stringify(next)).catch(() => {}); };
+  const updateBranding = async (next) => {
+    setBranding(next);
+    const infoPart = { companyName: next.companyName || '', footerText: next.footerText || '', companyPhone: next.companyPhone || '', companyEmail: next.companyEmail || '' };
+    const logoPart = { logo: next.logo || '', logoW: next.logoW || 0, logoH: next.logoH || 0 };
+    const logoPdfPart = { logoPdf: next.logoPdf || '', logoPdfW: next.logoPdfW || 0, logoPdfH: next.logoPdfH || 0 };
+    const results = await Promise.allSettled([
+      storage.set('brandingInfo', JSON.stringify(infoPart)),
+      storage.set('brandingLogo', JSON.stringify(logoPart)),
+      storage.set('brandingLogoPdf', JSON.stringify(logoPdfPart)),
+    ]);
+    return results.every(r => r.status === 'fulfilled');
+  };
 
   const storeVendors = useMemo(() => vendors.filter(v => v.storeId === loginStoreId), [vendors, loginStoreId]);
 
@@ -2607,6 +2642,8 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
   const [form, setForm] = useState(branding);
   const [logoError, setLogoError] = useState('');
   const [logoPdfError, setLogoPdfError] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
   const fileInputPdfRef = useRef(null);
 
@@ -2636,6 +2673,13 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
       setLogoPdfError('Não foi possível carregar essa imagem. Tente outro arquivo (JPG ou PNG).');
     }
     e.target.value = '';
+  };
+
+  const save = async () => {
+    setSaving(true); setSaveError('');
+    const ok = await updateBranding(form);
+    setSaving(false);
+    if (!ok) setSaveError('Não foi possível salvar agora — verifique sua conexão e tente de novo. Se persistir, tente uma logo com menos detalhes/tamanho de arquivo menor.');
   };
 
   return (
@@ -2674,7 +2718,8 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
         <label>Texto de rodapé padrão dos PDFs
           <textarea rows={2} value={form.footerText} onChange={e => setForm({ ...form, footerText: e.target.value })} placeholder="Ex: Razão Social LTDA · CNPJ 00.000.000/0001-00 · (00) 00000-0000 · contato@empresa.com.br" />
         </label>
-        <button className="btn-primary" onClick={() => updateBranding(form)}>Salvar identidade visual</button>
+        {saveError && <div className="error">{saveError}</div>}
+        <button className="btn-primary" disabled={saving} onClick={save}>{saving ? 'Salvando…' : 'Salvar identidade visual'}</button>
       </div>
       <div className="admin-form">
         <div className="form-subsection" style={{ borderTop: 'none', paddingTop: 0 }}>Contato da empresa para notificações</div>
@@ -2685,7 +2730,8 @@ function ConfigAdmin({ adminPin, updateAdminPin, branding, updateBranding }) {
         <label>E-mail da empresa
           <input type="email" value={form.companyEmail} onChange={e => setForm({ ...form, companyEmail: e.target.value })} placeholder="contato@empresa.com.br" />
         </label>
-        <button className="btn-primary" onClick={() => updateBranding(form)}>Salvar contato da empresa</button>
+        {saveError && <div className="error">{saveError}</div>}
+        <button className="btn-primary" disabled={saving} onClick={save}>{saving ? 'Salvando…' : 'Salvar contato da empresa'}</button>
       </div>
     </div>
   );
