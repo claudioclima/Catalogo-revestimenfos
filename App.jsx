@@ -1020,9 +1020,15 @@ function productSpecsLine(p) {
 
 function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, onAddClick, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }) {
   const store = stores.find(s => s.id === currentVendor.storeId);
-  const categories = ['Todos', ...Array.from(new Set(products.map(p => p.category).filter(Boolean)))];
+  const catMap = new Map();
+  products.forEach(p => {
+    const norm = (p.category || '').trim();
+    if (norm && !catMap.has(norm.toUpperCase())) catMap.set(norm.toUpperCase(), norm);
+  });
+  const categories = ['Todos', ...catMap.values()];
+  const sameCategory = (a, b) => (a || '').trim().toUpperCase() === (b || '').trim().toUpperCase();
   const filtered = products.filter(p => p.active !== false)
-    .filter(p => activeCategory === 'Todos' || p.category === activeCategory)
+    .filter(p => activeCategory === 'Todos' || sameCategory(p.category, activeCategory))
     .filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -1869,7 +1875,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById }) {
   };
   const save = async () => {
     if (!form.name.trim() || !form.price) return;
-    const payload = { ...form, price: Number(form.price), qtdCaixa: form.caixaNaoSeAplica ? '' : form.qtdCaixa, id: editingId || uid() };
+    const payload = { ...form, category: (form.category || '').trim(), price: Number(form.price), qtdCaixa: form.caixaNaoSeAplica ? '' : form.qtdCaixa, id: editingId || uid() };
     setSaving(true);
     await saveProduct(payload);
     setSaving(false);
