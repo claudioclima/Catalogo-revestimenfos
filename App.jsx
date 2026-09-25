@@ -348,7 +348,7 @@ function ReportPdfButtons({ pdfLibReady, buildDoc, filename }) {
   );
 }
 
-const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding', metas: 'metas', notifications: 'notifications' };
+const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding', metas: 'metas', notifications: 'notifications', productOptions: 'productOptions' };
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -364,6 +364,7 @@ export default function App() {
   const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '', companyPhone: '', companyEmail: '' });
   const [metas, setMetas] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [productOptions, setProductOptions] = useState({ acabamentos: ['Natural', 'Etrusco', 'Ox'], cores: ['Branco', 'Cinza', 'Creme'] });
 
   const [screen, setScreen] = useState('login');
   const [loginTab, setLoginTab] = useState('vendor');
@@ -443,14 +444,15 @@ export default function App() {
 
   const refreshAll = async () => {
     setRefreshing(true);
-    const [s, v, rep, ger, p, o, pin, br, met, notif] = await Promise.all([
+    const [s, v, rep, ger, p, o, pin, br, met, notif, popts] = await Promise.all([
       loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
       loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadBranding(),
       loadKey(STORAGE_KEYS.metas, []), loadKey(STORAGE_KEYS.notifications, []),
+      loadKey(STORAGE_KEYS.productOptions, { acabamentos: ['Natural', 'Etrusco', 'Ox'], cores: ['Branco', 'Cinza', 'Creme'] }),
     ]);
-    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br); setMetas(met); setNotifications(notif);
+    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br); setMetas(met); setNotifications(notif); setProductOptions(popts);
     setRefreshing(false);
-    return { s, v, rep, ger, p, o, pin, br, met, notif };
+    return { s, v, rep, ger, p, o, pin, br, met, notif, popts };
   };
 
   useEffect(() => {
@@ -494,6 +496,13 @@ export default function App() {
   const mutateRepresentantes = (updater) => mutate(STORAGE_KEYS.representantes, updater, setRepresentantes);
   const mutateGerentes = (updater) => mutate(STORAGE_KEYS.gerentes, updater, setGerentes);
   const mutateMetas = (updater) => mutate(STORAGE_KEYS.metas, updater, setMetas);
+  const addProductOption = async (kind, value) => {
+    const clean = (value || '').trim();
+    if (!clean) return;
+    const next = { ...productOptions, [kind]: productOptions[kind].some(v => v.toLowerCase() === clean.toLowerCase()) ? productOptions[kind] : [...productOptions[kind], clean] };
+    setProductOptions(next);
+    await storage.set(STORAGE_KEYS.productOptions, JSON.stringify(next)).catch(() => {});
+  };
   const mutateNotifications = (updater) => mutate(STORAGE_KEYS.notifications, updater, setNotifications);
 
   const updateMyVendorPin = async (pin) => {
@@ -875,7 +884,7 @@ export default function App() {
         <ChangePinScreen title="PIN de acesso do gerente" currentPin={currentGerente.pin} onSave={updateMyGerentePin} setScreen={setScreen} backScreen="gerenteDashboard" />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, productOptions, addProductOption, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -1011,11 +1020,18 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
 function productSpecsLine(p) {
   const parts = [];
   if (p.tamanho) parts.push(p.tamanho);
+  if (p.acabamento) parts.push(p.acabamento);
+  if (p.cor) parts.push(p.cor);
   if (p.peso) parts.push(`${p.peso} kg`);
   if (p.caixaNaoSeAplica) parts.push('Caixa: não se aplica');
   else if (p.qtdCaixa) parts.push(`${p.qtdCaixa}/cx`);
   if (p.qtdEmbalagem) parts.push(`${p.qtdEmbalagem}/emb.`);
   return parts.join(' · ');
+}
+
+function isCimenticio(category) {
+  const norm = (category || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  return norm.includes('CIMENT');
 }
 
 function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, onAddClick, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }) {
@@ -1796,7 +1812,7 @@ function GerenteVendorDetailScreen({ currentGerente, vendorId, initialPeriod, in
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
+function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, productOptions, addProductOption, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
   const cadastroTabs = ['produtos', 'lojas', 'vendedores', 'representantes', 'gerentes', 'metas', 'config'];
   const isCadastroTab = cadastroTabs.includes(adminTab);
   const allStoreIds = stores.map(s => s.id);
@@ -1837,7 +1853,7 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         </div>
       )}
       <div className="admin-body">
-        {adminTab === 'produtos' && <ProductsAdmin products={products} saveProduct={saveProduct} deleteProductById={deleteProductById} />}
+        {adminTab === 'produtos' && <ProductsAdmin products={products} saveProduct={saveProduct} deleteProductById={deleteProductById} productOptions={productOptions} addProductOption={addProductOption} />}
         {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
@@ -1852,8 +1868,46 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
   );
 }
 
-function ProductsAdmin({ products, saveProduct, deleteProductById }) {
-  const empty = { id: null, name: '', category: '', price: '', photo: '', active: true, peso: '', tamanho: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
+function ManagedSelect({ label, value, onChange, options, onAddOption }) {
+  const [adding, setAdding] = useState(false);
+  const [newValue, setNewValue] = useState('');
+  const ADD_FLAG = '__add_new__';
+
+  const handleChange = (e) => {
+    if (e.target.value === ADD_FLAG) { setAdding(true); return; }
+    onChange(e.target.value);
+  };
+  const confirmAdd = () => {
+    const clean = newValue.trim();
+    if (!clean) { setAdding(false); return; }
+    onAddOption(clean);
+    onChange(clean);
+    setNewValue('');
+    setAdding(false);
+  };
+
+  return (
+    <label>
+      {label}
+      {!adding ? (
+        <select value={value} onChange={handleChange}>
+          <option value="">Selecione</option>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+          <option value={ADD_FLAG}>➕ Adicionar novo…</option>
+        </select>
+      ) : (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input autoFocus value={newValue} onChange={e => setNewValue(e.target.value)} placeholder={`Novo ${label.toLowerCase()}`} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirmAdd(); } }} />
+          <button type="button" className="btn-secondary small" onClick={confirmAdd}>Adicionar</button>
+          <button type="button" className="btn-secondary small" onClick={() => { setAdding(false); setNewValue(''); }}>Cancelar</button>
+        </div>
+      )}
+    </label>
+  );
+}
+
+function ProductsAdmin({ products, saveProduct, deleteProductById, productOptions, addProductOption }) {
+  const empty = { id: null, name: '', category: '', price: '', photo: '', active: true, peso: '', tamanho: '', acabamento: '', cor: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const [photoError, setPhotoError] = useState('');
@@ -1900,6 +1954,12 @@ function ProductsAdmin({ products, saveProduct, deleteProductById }) {
         <label>Tamanho
           <input value={form.tamanho} onChange={e => setForm({ ...form, tamanho: e.target.value })} placeholder="Ex: 60x60cm" />
         </label>
+        {isCimenticio(form.category) && (
+          <>
+            <ManagedSelect label="Acabamento" value={form.acabamento} onChange={v => setForm({ ...form, acabamento: v })} options={productOptions.acabamentos} onAddOption={v => addProductOption('acabamentos', v)} />
+            <ManagedSelect label="Cor" value={form.cor} onChange={v => setForm({ ...form, cor: v })} options={productOptions.cores} onAddOption={v => addProductOption('cores', v)} />
+          </>
+        )}
         <label>Peso (kg)
           <input type="number" step="0.01" value={form.peso} onChange={e => setForm({ ...form, peso: e.target.value })} placeholder="Ex: 22" />
         </label>
