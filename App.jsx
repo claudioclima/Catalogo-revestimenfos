@@ -2914,6 +2914,20 @@ function ProductsReport({ products, pdfLibReady, branding }) {
   }).sort((a, b) => (a.category || '').trim().localeCompare((b.category || '').trim(), 'pt-BR') || (a.name || '').localeCompare(b.name || '', 'pt-BR'));
 
   const activeCount = filtered.filter(p => p.active !== false).length;
+  // Sem filtro de categoria: agrupa por tipo de produto (Cimentício, Pedras Naturais, Cubas...)
+  const groups = [];
+  if (filterCategory) {
+    groups.push({ title: '', items: filtered });
+  } else {
+    const gm = new Map();
+    filtered.forEach(p => {
+      const c = (p.category || '').trim() || 'Sem categoria';
+      const k = c.toUpperCase();
+      if (!gm.has(k)) gm.set(k, { title: c, items: [] });
+      gm.get(k).items.push(p);
+    });
+    groups.push(...gm.values());
+  }
   const acabCor = (p) => [p.acabamento, p.cor].filter(Boolean).join(' / ');
 
   const filterSummary = [
@@ -2937,8 +2951,22 @@ function ProductsReport({ products, pdfLibReady, branding }) {
       { label: 'Situação', width: 16 },
       { label: 'Preço', width: 24, align: 'right' },
     ];
-    const rows = filtered.map(p => [p.name, p.category, p.tamanho || '', acabCor(p), p.active === false ? 'Inativo' : 'Ativo', currency(p.price)]);
-    drawPdfTable(doc, 14, y, cols, rows, ['Total', '', '', '', '', `${filtered.length}`], 7.5);
+    let yy = y;
+    groups.forEach((g, gi) => {
+      if (g.title) {
+        if (yy > 245) { doc.addPage(); yy = 20; }
+        doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 19, 17);
+        doc.text(`${g.title.toUpperCase()} (${g.items.length})`, 14, yy);
+        doc.setFont(undefined, 'normal'); doc.setTextColor(0, 0, 0);
+        yy += 8;
+      }
+      const rows = g.items.map(p => [p.name, p.category, p.tamanho || '', acabCor(p), p.active === false ? 'Inativo' : 'Ativo', currency(p.price)]);
+      yy = drawPdfTable(doc, 14, yy, cols, rows, null, 7.5) + 6;
+    });
+    if (yy > 270) { doc.addPage(); yy = 20; }
+    doc.setFont(undefined, 'bold'); doc.setFontSize(10);
+    doc.text(`Total: ${filtered.length} produto(s)`, 14, yy);
+    doc.setFont(undefined, 'normal');
     pdfFooterStamp(doc, branding);
     return doc;
   };
@@ -2994,14 +3022,19 @@ function ProductsReport({ products, pdfLibReady, branding }) {
 
       <h3 className="report-heading">{filtered.length} produto(s) · {activeCount} ativo(s)</h3>
       <div className="report-cards">
-        {filtered.map(p => (
-          <div key={p.id} className="report-card">
-            <div className="report-card-title">{p.name} {p.active === false && <span className="muted">(inativo)</span>}</div>
-            <div className="report-card-row"><span className="label">Categoria</span><span>{p.category || '—'}</span></div>
-            {productSpecsLine(p) && <div className="report-card-row"><span className="label">Detalhes</span><span>{productSpecsLine(p)}</span></div>}
-            <div className="report-card-row"><span className="label">Preço</span><span>{currency(p.price)}</span></div>
-            {!p.photo && <div className="report-card-row"><span className="label">Foto</span><span>sem foto</span></div>}
-          </div>
+        {groups.map(g => (
+          <React.Fragment key={g.title || 'todos'}>
+            {g.title && <h3 className="report-heading" style={{ marginTop: 14 }}>{g.title.toUpperCase()} <span className="muted">({g.items.length})</span></h3>}
+            {g.items.map(p => (
+              <div key={p.id} className="report-card">
+                <div className="report-card-title">{p.name} {p.active === false && <span className="muted">(inativo)</span>}</div>
+                <div className="report-card-row"><span className="label">Categoria</span><span>{p.category || '—'}</span></div>
+                {productSpecsLine(p) && <div className="report-card-row"><span className="label">Detalhes</span><span>{productSpecsLine(p)}</span></div>}
+                <div className="report-card-row"><span className="label">Preço</span><span>{currency(p.price)}</span></div>
+                {!p.photo && <div className="report-card-row"><span className="label">Foto</span><span>sem foto</span></div>}
+              </div>
+            ))}
+          </React.Fragment>
         ))}
         {filtered.length === 0 && <p className="hint">Nenhum produto encontrado para esse filtro.</p>}
       </div>
