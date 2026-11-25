@@ -51,6 +51,30 @@ function resizeLogo(file, maxW = 400, quality = 0.85) {
   });
 }
 
+const FICHA_TECNICA_MAX_BYTES = 700 * 1024; // folga abaixo do limite de ~1MB por documento no Firestore
+
+function fileToDataUrl(file, maxBytes = FICHA_TECNICA_MAX_BYTES) {
+  return new Promise((resolve, reject) => {
+    if (file.size > maxBytes) { reject(new Error('arquivo muito grande')); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// Ficha técnica (PDF) é compartilhada por categoria (uma para Cimentício, outra
+// para Pedras Naturais) — fica guardada num documento próprio, separado dos
+// produtos, pra não deixar pesado o carregamento do catálogo.
+const loadGlobalFile = async (key) => {
+  try {
+    const r = await storage.get(key);
+    if (!r) return null;
+    return JSON.parse(r.value);
+  } catch (e) { console.error(e); return null; }
+};
+const linkBtnStyle = { background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' };
+
 function addLetterhead(doc, branding) {
   let y = 20;
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -1066,6 +1090,18 @@ function isCimenticio(category) {
   return norm.includes('CIMENT');
 }
 
+function isPedrasNaturais(category) {
+  const norm = (category || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  return norm.includes('PEDRA');
+}
+
+// Diz qual ficha t\u00e9cnica (chave do documento) vale para a categoria do produto, ou null se nenhuma.
+function fichaTecnicaKeyForCategory(category) {
+  if (isCimenticio(category)) return 'fichaTecnicaCimenticio';
+  if (isPedrasNaturais(category)) return 'fichaTecnicaPedrasNaturais';
+  return null;
+}
+
 function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, onAddClick, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }) {
   const store = stores.find(s => s.id === currentVendor.storeId);
   const catMap = new Map();
@@ -1079,6 +1115,25 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
     .filter(p => activeCategory === 'Todos' || sameCategory(p.category, activeCategory))
     .filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
   const [menuOpen, setMenuOpen] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState(null);
+
+  const downloadFichaTecnica = async (p) => {
+    const key = fichaTecnicaKeyForCategory(p.category);
+    if (!key || downloadingKey) return;
+    setDownloadingKey(key);
+    const file = await loadGlobalFile(key);
+    setDownloadingKey(null);
+    if (!file || !file.data) {
+      window.alert('A ficha técnica dessa categoria ainda não foi cadastrada.');
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = file.data;
+    link.download = file.name || `ficha-tecnica-${(p.category || 'produto').toLowerCase()}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
     <div className="screen">
@@ -1127,6 +1182,11 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
                 <div className="product-category">{p.category}</div>
                 {productSpecsLine(p) && <div className="product-specs">{productSpecsLine(p)}</div>}
                 <div className="product-price">{currency(p.price)}</div>
+                {fichaTecnicaKeyForCategory(p.category) && (
+                  <button className="ficha-btn" title="Baixar ficha técnica (PDF)" disabled={downloadingKey === fichaTecnicaKeyForCategory(p.category)} onClick={() => downloadFichaTecnica(p)}>
+                    <FileText size={16} />
+                  </button>
+                )}
                 <button className="add-btn" onClick={() => onAddClick(p.id)}><ShoppingCart size={18} /></button>
               </div>
             </div>
@@ -1938,6 +1998,87 @@ function ManagedSelect({ label, value, onChange, options, onAddOption }) {
   );
 }
 
+function FichasTecnicasCategoriaAdmin() {
+  const [fichaCimenticio, setFichaCimenticio] = useState(null);
+  const [fichaPedras, setFichaPedras] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState({ cimenticio: false, pedras: false });
+  const [error, setError] = useState({ cimenticio: '', pedras: '' });
+  const refCimenticio = useRef(null);
+  const refPedras = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      const [c, p] = await Promise.all([loadGlobalFile('fichaTecnicaCimenticio'), loadGlobalFile('fichaTecnicaPedrasNaturais')]);
+      setFichaCimenticio(c); setFichaPedras(p); setLoading(false);
+    })();
+  }, []);
+
+  const upload = async (kind, file) => {
+    if (!file) return;
+    const key = kind === 'cimenticio' ? 'fichaTecnicaCimenticio' : 'fichaTecnicaPedrasNaturais';
+    setError(prev => ({ ...prev, [kind]: '' }));
+    if (file.type !== 'application/pdf') {
+      setError(prev => ({ ...prev, [kind]: 'Envie um arquivo em PDF.' }));
+      return;
+    }
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setSaving(prev => ({ ...prev, [kind]: true }));
+      const fileData = { data: dataUrl, name: file.name };
+      await storage.set(key, JSON.stringify(fileData));
+      if (kind === 'cimenticio') setFichaCimenticio(fileData); else setFichaPedras(fileData);
+    } catch (err) {
+      setError(prev => ({ ...prev, [kind]: 'Esse PDF é muito grande — use um arquivo de até 700 KB.' }));
+    } finally {
+      setSaving(prev => ({ ...prev, [kind]: false }));
+    }
+  };
+
+  const remove = async (kind) => {
+    const key = kind === 'cimenticio' ? 'fichaTecnicaCimenticio' : 'fichaTecnicaPedrasNaturais';
+    setSaving(prev => ({ ...prev, [kind]: true }));
+    await storage.set(key, JSON.stringify(null)).catch(() => {});
+    if (kind === 'cimenticio') setFichaCimenticio(null); else setFichaPedras(null);
+    setSaving(prev => ({ ...prev, [kind]: false }));
+  };
+
+  return (
+    <div className="admin-form" style={{ marginBottom: 16 }}>
+      <h4 style={{ margin: '0 0 4px' }}>Fichas técnicas (PDF) por categoria</h4>
+      <p className="hint">Essa ficha vale pra todos os produtos da categoria — não precisa cadastrar uma pra cada produto.</p>
+      {loading ? <p className="hint">Carregando…</p> : (
+        <>
+          <div>
+            <button type="button" className="file-label" onClick={() => refCimenticio.current && refCimenticio.current.click()}>
+              <FileText size={16} /> {fichaCimenticio ? 'Trocar ficha técnica — Cimentício' : 'Adicionar ficha técnica — Cimentício'}
+            </button>
+            <input ref={refCimenticio} type="file" accept="application/pdf" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; upload('cimenticio', f); e.target.value = ''; }} />
+            {error.cimenticio && <div className="error">{error.cimenticio}</div>}
+            {saving.cimenticio && <p className="hint">Salvando…</p>}
+            {fichaCimenticio && !saving.cimenticio && (
+              <p className="hint">Arquivo atual: {fichaCimenticio.name || 'arquivo.pdf'} — <button type="button" onClick={() => remove('cimenticio')} style={linkBtnStyle}>remover</button></p>
+            )}
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <button type="button" className="file-label" onClick={() => refPedras.current && refPedras.current.click()}>
+              <FileText size={16} /> {fichaPedras ? 'Trocar ficha técnica — Pedras Naturais' : 'Adicionar ficha técnica — Pedras Naturais'}
+            </button>
+            <input ref={refPedras} type="file" accept="application/pdf" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; upload('pedras', f); e.target.value = ''; }} />
+            {error.pedras && <div className="error">{error.pedras}</div>}
+            {saving.pedras && <p className="hint">Salvando…</p>}
+            {fichaPedras && !saving.pedras && (
+              <p className="hint">Arquivo atual: {fichaPedras.name || 'arquivo.pdf'} — <button type="button" onClick={() => remove('pedras')} style={linkBtnStyle}>remover</button></p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProductsAdmin({ products, saveProduct, deleteProductById, productOptions, addProductOption }) {
   const empty = { id: null, name: '', category: '', price: '', photo: '', active: true, peso: '', tamanho: '', acabamento: '', cor: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
   const [form, setForm] = useState(empty);
@@ -1972,6 +2113,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
 
   return (
     <div>
+      <FichasTecnicasCategoriaAdmin />
       <div className="admin-form">
         <label>Nome
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Porcelanato Carrara 60x60" />
@@ -2923,6 +3065,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .product-specs { font-size: 10px; color: var(--ink-soft); margin: 0 0 6px; min-height: 1.2em; }
 .product-price { font-size: 14px; font-weight: 600; color: var(--clay-dark); padding-right: 38px; }
 .add-btn { position: absolute; bottom: 6px; right: 10px; background: #2E7D32; color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.25); transition: transform 0.15s ease; }
+.ficha-btn { position: absolute; bottom: 6px; right: 50px; background: var(--surface); color: var(--clay-dark); border: 1px solid var(--line); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .add-btn:active { transform: scale(0.92); }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 24px; color: var(--ink-soft); gap: 10px; text-align: center; }
 .floating-cart { position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 688px; margin: 0 auto; background: var(--ink); color: #fff; padding: 14px 18px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; cursor: pointer; }
