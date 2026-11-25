@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar, User, Handshake, Briefcase, ShieldCheck, Weight, Bell, Mail, MoreVertical } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, LogOut, Settings, Package, Store, Users, Receipt, Search, ImagePlus, ArrowLeft, Printer, MessageCircle, FileText, CheckCircle2, BarChart3, UserCog, RefreshCw, Home, TrendingUp, Calendar, User, Handshake, Briefcase, ShieldCheck, Weight, Bell, Mail, MoreVertical, FolderOpen } from 'lucide-react';
 import { storage } from './storage';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -74,6 +74,58 @@ const loadGlobalFile = async (key) => {
   } catch (e) { console.error(e); return null; }
 };
 const linkBtnStyle = { background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' };
+
+// ---- Informativos e fichas técnicas (lista de PDFs) ----
+// Índice (nomes) fica em 'infoDocsIndex'; cada PDF fica em 'infoDoc:<id>' (documento próprio, pra não pesar).
+const readInfoIndexStrict = async () => {
+  const r = await storage.get('infoDocsIndex'); // lança erro se falhar (não devolve lista vazia por engano)
+  return r ? JSON.parse(r.value) : null;
+};
+async function loadInfoDocs() {
+  try {
+    let idx = await readInfoIndexStrict();
+    if (idx === null) {
+      idx = [];
+      // Migra as 2 fichas por categoria da versão anterior, se existirem.
+      const legacy = [['fichaTecnicaCimenticio', 'Ficha técnica — Cimentício'], ['fichaTecnicaPedrasNaturais', 'Ficha técnica — Pedras Naturais']];
+      for (const [key, name] of legacy) {
+        const f = await loadGlobalFile(key);
+        if (f && f.data) {
+          const id = uid();
+          await storage.set(`infoDoc:${id}`, JSON.stringify({ data: f.data }));
+          idx.push({ id, name, fileName: f.name || '' });
+        }
+      }
+      await storage.set('infoDocsIndex', JSON.stringify(idx));
+    }
+    return idx;
+  } catch (e) { console.error(e); return null; }
+}
+async function addInfoDoc(name, fileName, data) {
+  const id = uid();
+  await storage.set(`infoDoc:${id}`, JSON.stringify({ data }));
+  const idx = (await readInfoIndexStrict()) || [];
+  const next = [...idx, { id, name, fileName }];
+  await storage.set('infoDocsIndex', JSON.stringify(next));
+  return next;
+}
+async function removeInfoDoc(id) {
+  const idx = (await readInfoIndexStrict()) || [];
+  const next = idx.filter(d => d.id !== id);
+  await storage.set('infoDocsIndex', JSON.stringify(next));
+  await storage.set(`infoDoc:${id}`, JSON.stringify(null)).catch(() => {});
+  return next;
+}
+async function downloadInfoDoc(entry) {
+  const file = await loadGlobalFile(`infoDoc:${entry.id}`);
+  if (!file || !file.data) { window.alert('Não foi possível carregar esse documento agora. Tente novamente.'); return; }
+  const link = document.createElement('a');
+  link.href = file.data;
+  link.download = entry.fileName || `${entry.name}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
 
 function addLetterhead(doc, branding) {
   let y = 20;
@@ -1090,18 +1142,6 @@ function isCimenticio(category) {
   return norm.includes('CIMENT');
 }
 
-function isPedrasNaturais(category) {
-  const norm = (category || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
-  return norm.includes('PEDRA');
-}
-
-// Diz qual ficha t\u00e9cnica (chave do documento) vale para a categoria do produto, ou null se nenhuma.
-function fichaTecnicaKeyForCategory(category) {
-  if (isCimenticio(category)) return 'fichaTecnicaCimenticio';
-  if (isPedrasNaturais(category)) return 'fichaTecnicaPedrasNaturais';
-  return null;
-}
-
 function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, onAddClick, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }) {
   const store = stores.find(s => s.id === currentVendor.storeId);
   const catMap = new Map();
@@ -1115,24 +1155,25 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
     .filter(p => activeCategory === 'Todos' || sameCategory(p.category, activeCategory))
     .filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
   const [menuOpen, setMenuOpen] = useState(false);
-  const [downloadingKey, setDownloadingKey] = useState(null);
-
-  const downloadFichaTecnica = async (p) => {
-    const key = fichaTecnicaKeyForCategory(p.category);
-    if (!key || downloadingKey) return;
-    setDownloadingKey(key);
-    const file = await loadGlobalFile(key);
-    setDownloadingKey(null);
-    if (!file || !file.data) {
-      window.alert('A ficha técnica dessa categoria ainda não foi cadastrada.');
-      return;
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [infoDocs, setInfoDocs] = useState(null); // null = carregando ou erro
+  const [infoDocsError, setInfoDocsError] = useState(false);
+  const [downloadingDocId, setDownloadingDocId] = useState(null);
+  const toggleDocs = async () => {
+    const opening = !docsOpen;
+    setDocsOpen(opening);
+    if (opening) {
+      setMenuOpen(false);
+      setInfoDocsError(false);
+      const list = await loadInfoDocs();
+      if (list === null) setInfoDocsError(true); else setInfoDocs(list);
     }
-    const link = document.createElement('a');
-    link.href = file.data;
-    link.download = file.name || `ficha-tecnica-${(p.category || 'produto').toLowerCase()}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  };
+  const openDoc = async (d) => {
+    if (downloadingDocId) return;
+    setDownloadingDocId(d.id);
+    await downloadInfoDoc(d);
+    setDownloadingDocId(null);
   };
 
   return (
@@ -1145,7 +1186,20 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
           <button className="icon-btn" onClick={() => setScreen('quotes')} title="Meus orçamentos"><FileText size={18} /></button>
           <button className="icon-btn" onClick={() => setScreen('myOrders')} title="Meus pedidos"><Receipt size={18} /></button>
           <div className="notif-wrap">
-            <button className="icon-btn" onClick={() => setMenuOpen(m => !m)} title="Mais opções"><MoreVertical size={18} /></button>
+            <button className="icon-btn" onClick={toggleDocs} title="Informativos e fichas técnicas"><FolderOpen size={18} /></button>
+            {docsOpen && (
+              <div className="notif-panel menu-panel">
+                {infoDocsError && <p className="hint" style={{ padding: 10 }}>Não foi possível carregar agora. Tente de novo.</p>}
+                {!infoDocsError && infoDocs === null && <p className="hint" style={{ padding: 10 }}>Carregando…</p>}
+                {!infoDocsError && infoDocs && infoDocs.length === 0 && <p className="hint" style={{ padding: 10 }}>Nenhum documento cadastrado ainda.</p>}
+                {!infoDocsError && infoDocs && infoDocs.map(d => (
+                  <button key={d.id} className="menu-item" disabled={downloadingDocId === d.id} onClick={() => openDoc(d)}><FileText size={15} /> {downloadingDocId === d.id ? 'Baixando…' : d.name}</button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="notif-wrap">
+            <button className="icon-btn" onClick={() => { setDocsOpen(false); setMenuOpen(m => !m); }} title="Mais opções"><MoreVertical size={18} /></button>
             {menuOpen && (
               <div className="notif-panel menu-panel">
                 <button className="menu-item" onClick={() => { setMenuOpen(false); setScreen('vendorConfig'); }}><Settings size={15} /> Configuração do PIN</button>
@@ -1182,11 +1236,6 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
                 <div className="product-category">{p.category}</div>
                 {productSpecsLine(p) && <div className="product-specs">{productSpecsLine(p)}</div>}
                 <div className="product-price">{currency(p.price)}</div>
-                {fichaTecnicaKeyForCategory(p.category) && (
-                  <button className="ficha-btn" title="Baixar ficha técnica (PDF)" disabled={downloadingKey === fichaTecnicaKeyForCategory(p.category)} onClick={() => downloadFichaTecnica(p)}>
-                    <FileText size={16} />
-                  </button>
-                )}
                 <button className="add-btn" onClick={() => onAddClick(p.id)}><ShoppingCart size={18} /></button>
               </div>
             </div>
@@ -1998,83 +2047,74 @@ function ManagedSelect({ label, value, onChange, options, onAddOption }) {
   );
 }
 
-function FichasTecnicasCategoriaAdmin() {
-  const [fichaCimenticio, setFichaCimenticio] = useState(null);
-  const [fichaPedras, setFichaPedras] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState({ cimenticio: false, pedras: false });
-  const [error, setError] = useState({ cimenticio: '', pedras: '' });
-  const refCimenticio = useRef(null);
-  const refPedras = useRef(null);
+function InfoDocsAdmin() {
+  const [docs, setDocs] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
 
   useEffect(() => {
     (async () => {
-      const [c, p] = await Promise.all([loadGlobalFile('fichaTecnicaCimenticio'), loadGlobalFile('fichaTecnicaPedrasNaturais')]);
-      setFichaCimenticio(c); setFichaPedras(p); setLoading(false);
+      const list = await loadInfoDocs();
+      if (list === null) setLoadError(true); else setDocs(list);
     })();
   }, []);
 
-  const upload = async (kind, file) => {
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const key = kind === 'cimenticio' ? 'fichaTecnicaCimenticio' : 'fichaTecnicaPedrasNaturais';
-    setError(prev => ({ ...prev, [kind]: '' }));
-    if (file.type !== 'application/pdf') {
-      setError(prev => ({ ...prev, [kind]: 'Envie um arquivo em PDF.' }));
-      return;
-    }
+    setError('');
+    if (file.type !== 'application/pdf') { setError('Envie um arquivo em PDF.'); return; }
+    let dataUrl;
+    try { dataUrl = await fileToDataUrl(file); }
+    catch { setError('Esse PDF é muito grande — use um arquivo de até 700 KB.'); return; }
+    const finalName = name.trim() || file.name.replace(/\.pdf$/i, '');
+    setBusy(true);
     try {
-      const dataUrl = await fileToDataUrl(file);
-      setSaving(prev => ({ ...prev, [kind]: true }));
-      const fileData = { data: dataUrl, name: file.name };
-      await storage.set(key, JSON.stringify(fileData));
-      if (kind === 'cimenticio') setFichaCimenticio(fileData); else setFichaPedras(fileData);
+      const next = await addInfoDoc(finalName, file.name, dataUrl);
+      setDocs(next); setName('');
     } catch (err) {
-      setError(prev => ({ ...prev, [kind]: 'Esse PDF é muito grande — use um arquivo de até 700 KB.' }));
-    } finally {
-      setSaving(prev => ({ ...prev, [kind]: false }));
+      console.error(err);
+      setError('Não foi possível salvar agora. Verifique a conexão e tente de novo.');
     }
+    setBusy(false);
   };
 
-  const remove = async (kind) => {
-    const key = kind === 'cimenticio' ? 'fichaTecnicaCimenticio' : 'fichaTecnicaPedrasNaturais';
-    setSaving(prev => ({ ...prev, [kind]: true }));
-    await storage.set(key, JSON.stringify(null)).catch(() => {});
-    if (kind === 'cimenticio') setFichaCimenticio(null); else setFichaPedras(null);
-    setSaving(prev => ({ ...prev, [kind]: false }));
+  const remove = async (d) => {
+    if (!window.confirm(`Remover "${d.name}"?`)) return;
+    setBusy(true); setError('');
+    try { setDocs(await removeInfoDoc(d.id)); }
+    catch (err) { console.error(err); setError('Não foi possível remover agora. Tente de novo.'); }
+    setBusy(false);
   };
 
   return (
     <div className="admin-form" style={{ marginBottom: 16 }}>
-      <h4 style={{ margin: '0 0 4px' }}>Fichas técnicas (PDF) por categoria</h4>
-      <p className="hint">Essa ficha vale pra todos os produtos da categoria — não precisa cadastrar uma pra cada produto.</p>
-      {loading ? <p className="hint">Carregando…</p> : (
+      <h4 style={{ margin: '0 0 4px' }}>Informativos e fichas técnicas (PDF)</h4>
+      <p className="hint">Esses PDFs aparecem para os vendedores no ícone de pasta, no topo do catálogo. Cada PDF até 700 KB.</p>
+      {loadError && <div className="error">Não foi possível carregar a lista agora. Atualize a página.</div>}
+      {!loadError && docs === null && <p className="hint">Carregando…</p>}
+      {docs && docs.length === 0 && <p className="hint">Nenhum documento cadastrado ainda.</p>}
+      {docs && docs.map(d => (
+        <p key={d.id} className="hint" style={{ margin: '2px 0' }}>
+          <FileText size={13} /> {d.name} — <button type="button" onClick={() => remove(d)} disabled={busy} style={linkBtnStyle}>remover</button>
+        </p>
+      ))}
+      {docs && (
         <>
-          <div>
-            <button type="button" className="file-label" onClick={() => refCimenticio.current && refCimenticio.current.click()}>
-              <FileText size={16} /> {fichaCimenticio ? 'Trocar ficha técnica — Cimentício' : 'Adicionar ficha técnica — Cimentício'}
-            </button>
-            <input ref={refCimenticio} type="file" accept="application/pdf" style={{ display: 'none' }}
-              onChange={e => { const f = e.target.files?.[0]; upload('cimenticio', f); e.target.value = ''; }} />
-            {error.cimenticio && <div className="error">{error.cimenticio}</div>}
-            {saving.cimenticio && <p className="hint">Salvando…</p>}
-            {fichaCimenticio && !saving.cimenticio && (
-              <p className="hint">Arquivo atual: {fichaCimenticio.name || 'arquivo.pdf'} — <button type="button" onClick={() => remove('cimenticio')} style={linkBtnStyle}>remover</button></p>
-            )}
-          </div>
-          <div style={{ marginTop: 10 }}>
-            <button type="button" className="file-label" onClick={() => refPedras.current && refPedras.current.click()}>
-              <FileText size={16} /> {fichaPedras ? 'Trocar ficha técnica — Pedras Naturais' : 'Adicionar ficha técnica — Pedras Naturais'}
-            </button>
-            <input ref={refPedras} type="file" accept="application/pdf" style={{ display: 'none' }}
-              onChange={e => { const f = e.target.files?.[0]; upload('pedras', f); e.target.value = ''; }} />
-            {error.pedras && <div className="error">{error.pedras}</div>}
-            {saving.pedras && <p className="hint">Salvando…</p>}
-            {fichaPedras && !saving.pedras && (
-              <p className="hint">Arquivo atual: {fichaPedras.name || 'arquivo.pdf'} — <button type="button" onClick={() => remove('pedras')} style={linkBtnStyle}>remover</button></p>
-            )}
-          </div>
+          <label>Nome do documento (como o vendedor vai ver)
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Ficha técnica — Cimentício" />
+          </label>
+          <button type="button" className="file-label" disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}>
+            <FileText size={16} /> {busy ? 'Salvando…' : 'Escolher PDF e adicionar'}
+          </button>
+          <input ref={fileRef} type="file" accept="application/pdf" onChange={onFile} style={{ display: 'none' }} />
         </>
       )}
+      {error && <div className="error">{error}</div>}
     </div>
   );
 }
@@ -2119,7 +2159,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
 
   return (
     <div>
-      <FichasTecnicasCategoriaAdmin />
+      <InfoDocsAdmin />
       <div className="admin-form">
         <label>Nome
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Porcelanato Carrara 60x60" />
@@ -3257,7 +3297,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .product-specs { font-size: 10px; color: var(--ink-soft); margin: 0 0 6px; min-height: 1.2em; }
 .product-price { font-size: 14px; font-weight: 600; color: var(--clay-dark); padding-right: 38px; }
 .add-btn { position: absolute; bottom: 6px; right: 10px; background: #2E7D32; color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.25); transition: transform 0.15s ease; }
-.ficha-btn { position: absolute; bottom: 6px; right: 50px; background: var(--surface); color: var(--clay-dark); border: 1px solid var(--line); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .add-btn:active { transform: scale(0.92); }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 24px; color: var(--ink-soft); gap: 10px; text-align: center; }
 .floating-cart { position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 688px; margin: 0 auto; background: var(--ink); color: #fff; padding: 14px 18px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; cursor: pointer; }
