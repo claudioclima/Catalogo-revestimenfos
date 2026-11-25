@@ -400,6 +400,16 @@ export default function App() {
     } catch { return fallback; }
   };
 
+  // Se o índice estiver vazio ou incompleto, varre o banco em busca de produtos
+  // que ficaram "órfãos" (salvos individualmente, mas fora da lista de índice)
+  // e reconstrói a lista automaticamente.
+  const recoverOrphanProducts = async () => {
+    try {
+      const docs = await storage.listByPrefix('product:');
+      return docs.map(d => { try { return JSON.parse(d.value); } catch { return null; } }).filter(Boolean);
+    } catch (e) { console.error(e); return []; }
+  };
+
   const loadProducts = async () => {
     const ids = await loadKey('productIndex', null);
     if (ids === null) {
@@ -415,7 +425,15 @@ export default function App() {
       return [];
     }
     const results = await Promise.all(ids.map(id => loadKey(`product:${id}`, null)));
-    return results.filter(Boolean);
+    const found = results.filter(Boolean);
+    if (ids.length === 0 || found.length < ids.length) {
+      const recovered = await recoverOrphanProducts();
+      if (recovered.length > found.length) {
+        await storage.set('productIndex', JSON.stringify(recovered.map(p => p.id))).catch(() => {});
+        return recovered;
+      }
+    }
+    return found;
   };
 
   const loadBranding = async () => {
@@ -520,11 +538,21 @@ export default function App() {
     const updated = next.find(g => g.id === currentGerente.id);
     if (updated) setCurrentGerente(updated);
   };
+  // Lê o índice "na unha": se a leitura falhar, lança erro em vez de devolver uma
+  // lista vazia — assim quem chama sabe que não deve salvar por cima do índice.
+  const loadProductIndexStrict = async () => {
+    const r = await storage.get('productIndex');
+    return r ? JSON.parse(r.value) : [];
+  };
   const saveProduct = async (product) => {
     try { await storage.set(`product:${product.id}`, JSON.stringify(product)); } catch (e) { console.error(e); }
-    const idx = await loadKey('productIndex', []);
-    if (!idx.includes(product.id)) {
-      try { await storage.set('productIndex', JSON.stringify([...idx, product.id])); } catch (e) { console.error(e); }
+    try {
+      const idx = await loadProductIndexStrict();
+      if (!idx.includes(product.id)) {
+        await storage.set('productIndex', JSON.stringify([...idx, product.id]));
+      }
+    } catch (e) {
+      console.error('Não foi possível atualizar o índice de produtos com segurança, tente novamente:', e);
     }
     setProducts(current => {
       const exists = current.some(p => p.id === product.id);
@@ -532,8 +560,12 @@ export default function App() {
     });
   };
   const deleteProductById = async (id) => {
-    const idx = await loadKey('productIndex', []);
-    try { await storage.set('productIndex', JSON.stringify(idx.filter(x => x !== id))); } catch (e) { console.error(e); }
+    try {
+      const idx = await loadProductIndexStrict();
+      await storage.set('productIndex', JSON.stringify(idx.filter(x => x !== id)));
+    } catch (e) {
+      console.error('Não foi possível atualizar o índice de produtos com segurança, tente novamente:', e);
+    }
     setProducts(current => current.filter(p => p.id !== id));
   };
   const mutateOrders = (updater) => mutate(STORAGE_KEYS.orders, updater, setOrders);

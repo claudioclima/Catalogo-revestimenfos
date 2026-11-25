@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { firebaseConfig } from './firebaseConfig';
 
 const app = initializeApp(firebaseConfig);
@@ -17,5 +17,15 @@ export const storage = {
     const ref = doc(db, 'appdata', key);
     await setDoc(ref, { value });
     return { key, value };
+  },
+  // Varre todos os documentos da coleção cujo nome comece com `prefix` (ex: "product:").
+  // Usado para recuperar registros "órfãos" caso um índice seja perdido.
+  async listByPrefix(prefix) {
+    const snap = await getDocs(collection(db, 'appdata'));
+    const out = [];
+    snap.forEach((d) => {
+      if (d.id.startsWith(prefix)) out.push({ key: d.id, value: d.data().value });
+    });
+    return out;
   },
 };
