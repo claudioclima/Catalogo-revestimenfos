@@ -1953,7 +1953,7 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         {adminTab === 'metas' && <MetasAdmin metas={metas} stores={stores} vendors={vendors} updateMetas={updateMetas} />}
         {adminTab === 'pedidos' && <OrdersListAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} fixedStatus="pedido" />}
         {adminTab === 'orcamentos' && <OrdersListAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} fixedStatus="orcamento" />}
-        {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} branding={branding} />}
+        {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} products={products} pdfLibReady={pdfLibReady} branding={branding} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} branding={branding} updateBranding={updateBranding} />}
       </div>
     </div>
@@ -2714,7 +2714,7 @@ function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady,
   );
 }
 
-function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady, branding }) {
+function PerformanceReport({ orders, stores, vendors, representantes, pdfLibReady, branding }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterRepresentante, setFilterRepresentante] = useState('');
@@ -2873,6 +2873,153 @@ function RelatoriosAdmin({ orders, stores, vendors, representantes, pdfLibReady,
         )}
         {porRepresentante.length === 0 && <p className="hint">Nenhum representante encontrado para esse filtro.</p>}
       </div>
+    </div>
+  );
+}
+
+function exportGenericCSV(headers, rows, filename) {
+  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function ProductsReport({ products, pdfLibReady, branding }) {
+  const [search, setSearch] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [filterStatus, setFilterStatus] = useState('todos');
+  const [filterAcabamento, setFilterAcabamento] = useState('');
+  const [filterCor, setFilterCor] = useState('');
+  const [onlyNoPhoto, setOnlyNoPhoto] = useState(false);
+
+  const norm = (v) => (v || '').trim().toUpperCase();
+  const catMap = new Map();
+  products.forEach(p => { const c = (p.category || '').trim(); if (c && !catMap.has(norm(c))) catMap.set(norm(c), c); });
+  const categories = [...catMap.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const acabamentos = [...new Set(products.map(p => (p.acabamento || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const cores = [...new Set(products.map(p => (p.cor || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  const filtered = products.filter(p => {
+    if (search && !(p.name || '').toLowerCase().includes(search.toLowerCase())) return false;
+    if (filterCategory && norm(p.category) !== norm(filterCategory)) return false;
+    if (filterStatus === 'ativos' && p.active === false) return false;
+    if (filterStatus === 'inativos' && p.active !== false) return false;
+    if (filterAcabamento && (p.acabamento || '').trim() !== filterAcabamento) return false;
+    if (filterCor && (p.cor || '').trim() !== filterCor) return false;
+    if (onlyNoPhoto && p.photo) return false;
+    return true;
+  }).sort((a, b) => (a.category || '').trim().localeCompare((b.category || '').trim(), 'pt-BR') || (a.name || '').localeCompare(b.name || '', 'pt-BR'));
+
+  const activeCount = filtered.filter(p => p.active !== false).length;
+  const acabCor = (p) => [p.acabamento, p.cor].filter(Boolean).join(' / ');
+
+  const filterSummary = [
+    filterCategory ? `Categoria: ${filterCategory}` : 'Todas as categorias',
+    filterStatus === 'ativos' ? 'Somente ativos' : filterStatus === 'inativos' ? 'Somente inativos' : 'Ativos e inativos',
+    filterAcabamento ? `Acabamento: ${filterAcabamento}` : '',
+    filterCor ? `Cor: ${filterCor}` : '',
+    onlyNoPhoto ? 'Somente sem foto' : '',
+    search ? `Busca: "${search}"` : '',
+  ].filter(Boolean).join(' · ');
+
+  const buildDoc = () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const y = pdfHeader(doc, branding, 'Relatório de produtos cadastrados', [filterSummary, `${filtered.length} produto(s) listado(s)`]);
+    const cols = [
+      { label: 'Produto', width: 58, maxChars: 36 },
+      { label: 'Categoria', width: 30, maxChars: 18 },
+      { label: 'Tamanho', width: 22, maxChars: 12 },
+      { label: 'Acab. / Cor', width: 30, maxChars: 18 },
+      { label: 'Situação', width: 16 },
+      { label: 'Preço', width: 24, align: 'right' },
+    ];
+    const rows = filtered.map(p => [p.name, p.category, p.tamanho || '', acabCor(p), p.active === false ? 'Inativo' : 'Ativo', currency(p.price)]);
+    drawPdfTable(doc, 14, y, cols, rows, ['Total', '', '', '', '', `${filtered.length}`], 7.5);
+    pdfFooterStamp(doc, branding);
+    return doc;
+  };
+
+  const exportCsv = () => {
+    const headers = ['Produto', 'Categoria', 'Tamanho', 'Acabamento', 'Cor', 'Peso(kg)', 'QtdEmbalagem', 'QtdCaixa', 'Preco', 'Situacao', 'Foto'];
+    const rows = filtered.map(p => [p.name, p.category, p.tamanho || '', p.acabamento || '', p.cor || '', p.peso || '', p.qtdEmbalagem || '', p.caixaNaoSeAplica ? 'Não se aplica' : (p.qtdCaixa || ''), Number(p.price) || 0, p.active === false ? 'Inativo' : 'Ativo', p.photo ? 'Sim' : 'Não']);
+    exportGenericCSV(headers, rows, 'produtos-cadastrados.csv');
+  };
+
+  return (
+    <div>
+      <div className="admin-form">
+        <label>Buscar por nome
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Ex: tijolinho" />
+        </label>
+        <label>Categoria
+          <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
+            <option value="">Todas as categorias</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        <label>Situação
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="todos">Ativos e inativos</option>
+            <option value="ativos">Somente ativos</option>
+            <option value="inativos">Somente inativos</option>
+          </select>
+        </label>
+        {acabamentos.length > 0 && (
+          <label>Acabamento
+            <select value={filterAcabamento} onChange={e => setFilterAcabamento(e.target.value)}>
+              <option value="">Todos</option>
+              {acabamentos.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </label>
+        )}
+        {cores.length > 0 && (
+          <label>Cor
+            <select value={filterCor} onChange={e => setFilterCor(e.target.value)}>
+              <option value="">Todas</option>
+              {cores.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+        )}
+        <label className="checkbox-row">
+          <input type="checkbox" checked={onlyNoPhoto} onChange={e => setOnlyNoPhoto(e.target.checked)} />
+          Mostrar só produtos sem foto
+        </label>
+        <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename="produtos-cadastrados.pdf" />
+        <button className="btn-secondary" onClick={exportCsv} disabled={filtered.length === 0}>Exportar planilha (CSV)</button>
+      </div>
+
+      <h3 className="report-heading">{filtered.length} produto(s) · {activeCount} ativo(s)</h3>
+      <div className="report-cards">
+        {filtered.map(p => (
+          <div key={p.id} className="report-card">
+            <div className="report-card-title">{p.name} {p.active === false && <span className="muted">(inativo)</span>}</div>
+            <div className="report-card-row"><span className="label">Categoria</span><span>{p.category || '—'}</span></div>
+            {productSpecsLine(p) && <div className="report-card-row"><span className="label">Detalhes</span><span>{productSpecsLine(p)}</span></div>}
+            <div className="report-card-row"><span className="label">Preço</span><span>{currency(p.price)}</span></div>
+            {!p.photo && <div className="report-card-row"><span className="label">Foto</span><span>sem foto</span></div>}
+          </div>
+        ))}
+        {filtered.length === 0 && <p className="hint">Nenhum produto encontrado para esse filtro.</p>}
+      </div>
+    </div>
+  );
+}
+
+function RelatoriosAdmin({ orders, stores, vendors, representantes, products, pdfLibReady, branding }) {
+  const [view, setView] = useState('desempenho');
+  return (
+    <div>
+      <div className="tabs" style={{ marginBottom: 12 }}>
+        <button className={view === 'desempenho' ? 'tab active' : 'tab'} onClick={() => setView('desempenho')}><BarChart3 size={14} /> Desempenho</button>
+        <button className={view === 'produtos' ? 'tab active' : 'tab'} onClick={() => setView('produtos')}><Package size={14} /> Produtos cadastrados</button>
+      </div>
+      {view === 'desempenho'
+        ? <PerformanceReport orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} branding={branding} />
+        : <ProductsReport products={products} pdfLibReady={pdfLibReady} branding={branding} />}
     </div>
   );
 }
