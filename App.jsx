@@ -2086,6 +2086,12 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
   const [photoError, setPhotoError] = useState('');
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
+  const [listSearch, setListSearch] = useState('');
+  const visibleProducts = products.filter(p => {
+    const q = listSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (p.name || '').toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q) || (p.tamanho || '').toLowerCase().includes(q);
+  });
 
   const onPhoto = async (e) => {
     const file = e.target.files?.[0];
@@ -2158,8 +2164,13 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
           {editingId && <button className="btn-secondary" onClick={() => { setForm(empty); setEditingId(null); }}>Cancelar</button>}
         </div>
       </div>
+      <div className="search-row" style={{ margin: '16px 0 8px' }}>
+        <Search size={16} />
+        <input placeholder="Pesquisar produto cadastrado (nome, categoria ou tamanho)…" value={listSearch} onChange={e => setListSearch(e.target.value)} />
+      </div>
+      {listSearch.trim() && <p className="hint">{visibleProducts.length} de {products.length} produto(s)</p>}
       <div className="admin-list">
-        {products.map(p => (
+        {visibleProducts.map(p => (
           <div key={p.id} className="admin-list-item">
             <div className="admin-list-photo">{p.photo ? <img src={p.photo} alt="" /> : <Package size={16} />}</div>
             <div className="admin-list-info">
@@ -2172,6 +2183,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
           </div>
         ))}
         {products.length === 0 && <p className="hint">Nenhum produto cadastrado ainda.</p>}
+        {products.length > 0 && visibleProducts.length === 0 && <p className="hint">Nenhum produto encontrado para essa pesquisa.</p>}
       </div>
     </div>
   );
