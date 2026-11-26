@@ -427,6 +427,12 @@ function ReportPdfButtons({ pdfLibReady, buildDoc, filename }) {
 
 const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding', metas: 'metas', notifications: 'notifications', productOptions: 'productOptions' };
 
+// Guarda no aparelho quem está logado, pra não deslogar ao atualizar a página (puxar a tela pra baixo).
+const SESSION_KEY = 'catalogoSession';
+const CART_KEY = 'catalogoCart';
+function saveSession(role, id) { try { localStorage.setItem(SESSION_KEY, JSON.stringify({ role, id: id || null })); } catch {} }
+function clearSession() { try { localStorage.removeItem(SESSION_KEY); localStorage.removeItem(CART_KEY); } catch {} }
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [pdfLibReady, setPdfLibReady] = useState(false);
@@ -561,8 +567,35 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    (async () => { await refreshAll(); setReady(true); })();
+    (async () => {
+      const data = await refreshAll();
+      try {
+        const ses = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+        if (ses && ses.role === 'vendor') {
+          const v = data.v.find(x => x.id === ses.id);
+          if (v) {
+            setCurrentVendor(v);
+            try { const c = JSON.parse(localStorage.getItem(CART_KEY) || '[]'); if (Array.isArray(c)) setCart(c); } catch {}
+            setScreen('catalog');
+          }
+        } else if (ses && ses.role === 'rep') {
+          const r = data.rep.find(x => x.id === ses.id);
+          if (r) { setCurrentRepresentante(r); setScreen('repDashboard'); }
+        } else if (ses && ses.role === 'ger') {
+          const g = data.ger.find(x => x.id === ses.id);
+          if (g) { setCurrentGerente(g); setScreen('gerenteDashboard'); }
+        } else if (ses && ses.role === 'admin') {
+          setScreen('admin');
+        }
+      } catch {}
+      setReady(true);
+    })();
   }, []);
+
+  useEffect(() => {
+    if (!ready || !currentVendor) return;
+    try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch {}
+  }, [cart, ready, currentVendor]);
 
   useEffect(() => {
     if (ready && (screen === 'admin' || screen === 'repDashboard' || screen === 'gerenteDashboard')) { refreshAll(); }
@@ -667,27 +700,28 @@ export default function App() {
     const vendor = v.find(x => x.id === loginVendorId);
     if (!vendor) { setLoginError('Selecione um vendedor.'); return; }
     if ((vendor.pin || '') !== loginPin) { setLoginError('PIN incorreto.'); return; }
-    setCurrentVendor(vendor); setCart([]); setLoginError(''); setScreen('catalog');
+    setCurrentVendor(vendor); setCart([]); setLoginError(''); saveSession('vendor', vendor.id); setScreen('catalog');
   };
   const doRepresentanteLogin = async () => {
     const { rep } = await refreshAll();
     const r = rep.find(x => x.id === loginRepId);
     if (!r) { setLoginError('Selecione um representante.'); return; }
     if ((r.pin || '') !== loginRepPin) { setLoginError('PIN incorreto.'); return; }
-    setCurrentRepresentante(r); setLoginError(''); setScreen('repDashboard');
+    setCurrentRepresentante(r); setLoginError(''); saveSession('rep', r.id); setScreen('repDashboard');
   };
   const doGerenteLogin = async () => {
     const { ger } = await refreshAll();
     const g = ger.find(x => x.id === loginGerId);
     if (!g) { setLoginError('Selecione um gerente.'); return; }
     if ((g.pin || '') !== loginGerPin) { setLoginError('PIN incorreto.'); return; }
-    setCurrentGerente(g); setLoginError(''); setScreen('gerenteDashboard');
+    setCurrentGerente(g); setLoginError(''); saveSession('ger', g.id); setScreen('gerenteDashboard');
   };
   const doAdminLogin = () => {
-    if (adminPinInput === adminPin) { setScreen('admin'); setLoginError(''); }
+    if (adminPinInput === adminPin) { saveSession('admin'); setScreen('admin'); setLoginError(''); }
     else { setLoginError('PIN de administrador incorreto.'); }
   };
   const logout = () => {
+    clearSession();
     setCurrentVendor(null); setCurrentRepresentante(null); setCurrentGerente(null); setCart([]); setEditingOrderId(null); setScreen('login');
     setLoginStoreId(''); setLoginVendorId(''); setLoginPin(''); setLoginRepId(''); setLoginRepPin(''); setLoginGerId(''); setLoginGerPin('');
   };
@@ -3263,7 +3297,7 @@ const STYLES = `
   --teal-dark: #3B3A34;
 }
 * { box-sizing: border-box; }
-html, body { overflow-x: hidden; max-width: 100vw; }
+html, body { overflow-x: hidden; max-width: 100vw; overscroll-behavior-y: contain; }
 .app-root { font-family: 'Inter', sans-serif; color: var(--ink); background: var(--bg); min-height: 100vh; overflow-x: hidden; max-width: 100vw; }
 h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .screen-center { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: #1B1A18; }
