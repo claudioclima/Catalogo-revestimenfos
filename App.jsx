@@ -740,7 +740,7 @@ export default function App() {
       representanteCommissionPercent: repPercent,
       cliente: { ...checkout },
       items: cartDetailed.map(i => ({
-        productId: i.product.id, name: i.product.name, price: i.product.price, qty: i.qty, discountPercent: i.discPercent,
+        productId: i.product.id, name: i.product.name, price: i.product.price, qty: i.qty, unidade: productUnit(i.product), discountPercent: i.discPercent,
         peso: i.product.peso || null, tamanho: i.product.tamanho || null,
         qtdEmbalagem: i.product.qtdEmbalagem || null, qtdCaixa: i.product.qtdCaixa || null, caixaNaoSeAplica: !!i.product.caixaNaoSeAplica,
       })),
@@ -846,15 +846,15 @@ export default function App() {
     if (order.cliente.endereco) { doc.text(`Endereço: ${order.cliente.endereco}`, 14, y); y += 6; }
     y += 4;
     const itemCols = [
-      { label: 'Produto', width: 78, maxChars: 42 },
-      { label: 'Qtd', width: 16, align: 'right' },
+      { label: 'Produto', width: 68, maxChars: 36 },
+      { label: 'Qtd', width: 26, align: 'right' },
       { label: 'Desc.', width: 18, align: 'right' },
-      { label: 'Preço', width: 30, align: 'right' },
-      { label: 'Subtotal', width: 32, align: 'right' },
+      { label: 'Preço', width: 36, align: 'right' },
+      { label: 'Subtotal', width: 30, align: 'right' },
     ];
     const rows = order.items.map(i => {
       const lineTotal = i.price * i.qty * (1 - (i.discountPercent || 0) / 100);
-      return [i.name, i.qty, `${i.discountPercent || 0}%`, currency(i.price), currency(lineTotal)];
+      return [i.name, itemQtyText(i), `${i.discountPercent || 0}%`, itemPriceText(i), currency(lineTotal)];
     });
     y = drawPdfTable(doc, 14, y, itemCols, rows);
     const specLines = order.items.map(packagingLine).filter(Boolean);
@@ -907,7 +907,7 @@ export default function App() {
         const lineTotal = i.price * i.qty * (1 - (i.discountPercent || 0) / 100);
         const descTxt = i.discountPercent ? ` (desc. ${i.discountPercent}%)` : '';
         const pkg = packagingLine(i);
-        return `${i.qty}x ${i.name}${descTxt} - ${currency(lineTotal)}${pkg ? ' [' + pkg + ']' : ''}`;
+        return `${itemQtyText(i)} - ${i.name}${descTxt} - ${currency(lineTotal)}${pkg ? ' [' + pkg + ']' : ''}`;
       }),
       '',
       order.descontoRevendaPercent ? `Desconto revenda: ${order.descontoRevendaPercent}%` : null,
@@ -1021,16 +1021,22 @@ function ChangePinScreen({ title, currentPin, onSave, setScreen, backScreen }) {
 }
 
 function QuantityModal({ product, initialQty, onConfirm, onClose }) {
-  const [qty, setQty] = useState(String(initialQty || 1));
+  const unit = productUnit(product);
+  const decimal = unit !== 'un';
+  const [qty, setQty] = useState(String(initialQty || 1).replace('.', ','));
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
-  const confirm = () => { const n = Math.max(0, parseInt(qty, 10) || 0); onConfirm(n); };
+  const confirm = () => {
+    const raw = String(qty).replace(',', '.');
+    const n = decimal ? Math.round((parseFloat(raw) || 0) * 100) / 100 : parseInt(raw, 10) || 0;
+    onConfirm(Math.max(0, n));
+  };
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-title">{product.name}</div>
-        <div className="modal-sub">{currency(product.price)} / un.</div>
-        <input ref={inputRef} type="number" inputMode="numeric" min="0" className="modal-qty-input" value={qty}
+        <div className="modal-sub">{currency(product.price)} / {unitShort(unit)} · quantidade em {unitShort(unit)}</div>
+        <input ref={inputRef} type={decimal ? 'text' : 'number'} inputMode={decimal ? 'decimal' : 'numeric'} min="0" className="modal-qty-input" value={qty}
           onChange={e => setQty(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') confirm(); }} />
         <div className="modal-actions">
@@ -1137,6 +1143,26 @@ function productSpecsLine(p) {
   return parts.join(' · ');
 }
 
+const UNIT_OPTIONS = [
+  { value: 'm2', label: 'm² (metro quadrado)', short: 'm²' },
+  { value: 'ml', label: 'm linear (metro linear)', short: 'm linear' },
+  { value: 'un', label: 'Unidade', short: 'un.' },
+];
+// Para produtos antigos (sem unidade escolhida): cubas e seixos = unidade, bordas = metro linear, o resto = m².
+function guessUnit(p) {
+  const t = `${p?.category || ''} ${p?.name || ''}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  if (t.includes('CUBA') || t.includes('SEIXO')) return 'un';
+  if (t.includes('BORDA')) return 'ml';
+  return 'm2';
+}
+function productUnit(p) { return (p && p.unidade) || guessUnit(p); }
+function unitShort(u) { return UNIT_OPTIONS.find(o => o.value === u)?.short || ''; }
+function fmtQty(q) { return Number(q || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 }); }
+// Pedidos/orçamentos antigos não guardaram a unidade: nesse caso deduz pelo nome do item.
+function itemUnitShort(i) { return unitShort(i.unidade || guessUnit({ name: i.name })); }
+function itemQtyText(i) { return `${fmtQty(i.qty)} ${itemUnitShort(i)}`; }
+function itemPriceText(i) { return `${currency(i.price)}/${itemUnitShort(i)}`; }
+
 function isCimenticio(category) {
   const norm = (category || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
   return norm.includes('CIMENT');
@@ -1235,7 +1261,7 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
                 <div className="product-name">{p.name}</div>
                 <div className="product-category">{p.category}</div>
                 {productSpecsLine(p) && <div className="product-specs">{productSpecsLine(p)}</div>}
-                <div className="product-price">{currency(p.price)}</div>
+                <div className="product-price">{currency(p.price)} <span style={{ fontSize: 11, fontWeight: 400 }}>/ {unitShort(productUnit(p))}</span></div>
                 <button className="add-btn" onClick={() => onAddClick(p.id)}><ShoppingCart size={18} /></button>
               </div>
             </div>
@@ -1278,7 +1304,7 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
                 <div className="cart-item-photo">{i.product.photo ? <img src={i.product.photo} alt="" /> : <Package size={18} />}</div>
                 <div className="cart-item-info">
                   <div className="cart-item-name">{i.product.name}</div>
-                  <div className="cart-item-price">{currency(i.product.price)} / un. {i.discPercent > 0 && <span className="disc-tag">-{i.discPercent}%</span>}</div>
+                  <div className="cart-item-price">{currency(i.product.price)} / {unitShort(productUnit(i.product))} {i.discPercent > 0 && <span className="disc-tag">-{i.discPercent}%</span>}</div>
                   <div className="disc-row">
                     <span>Desc. %</span>
                     <input type="number" min="0" max="100" className="disc-input" value={i.discountPercent} onChange={e => setItemDiscount(i.productId, e.target.value)} />
@@ -1286,7 +1312,7 @@ function CartScreen({ cartDetailed, setQty, setItemDiscount, removeFromCart, car
                 </div>
                 <div className="qty-control">
                   <button onClick={() => setQty(i.productId, i.qty - 1)}><Minus size={14} /></button>
-                  <span onClick={() => setQty(i.productId, i.qty)}>{i.qty}</span>
+                  <span onClick={() => setQty(i.productId, i.qty)}>{fmtQty(i.qty)}</span>
                   <button onClick={() => setQty(i.productId, i.qty + 1)}><Plus size={14} /></button>
                 </div>
                 <button className="icon-btn" onClick={() => removeFromCart(i.productId)}><Trash2 size={16} /></button>
@@ -1383,15 +1409,15 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
         {order.cliente.endereco && <p><strong>Endereço:</strong> {order.cliente.endereco}</p>}
         <div className="divider" />
         <table className="order-table">
-          <thead><tr><th>Produto</th><th>Qtd</th><th>Desc.</th><th>Subtotal</th></tr></thead>
+          <thead><tr><th>Produto</th><th>Qtd</th><th>Preço</th><th>Desc.</th><th>Subtotal</th></tr></thead>
           <tbody>
             {order.items.map(i => {
               const lineTotal = i.price * i.qty * (1 - (i.discountPercent || 0) / 100);
               const pkg = packagingLine(i);
               return (
                 <React.Fragment key={i.productId}>
-                  <tr><td>{i.name}</td><td>{i.qty}</td><td>{i.discountPercent || 0}%</td><td>{currency(lineTotal)}</td></tr>
-                  {pkg && <tr className="spec-row"><td colSpan={4}>{pkg}</td></tr>}
+                  <tr><td>{i.name}</td><td>{itemQtyText(i)}</td><td>{itemPriceText(i)}</td><td>{i.discountPercent || 0}%</td><td>{currency(lineTotal)}</td></tr>
+                  {pkg && <tr className="spec-row"><td colSpan={5}>{pkg}</td></tr>}
                 </React.Fragment>
               );
             })}
@@ -2120,7 +2146,7 @@ function InfoDocsAdmin() {
 }
 
 function ProductsAdmin({ products, saveProduct, deleteProductById, productOptions, addProductOption }) {
-  const empty = { id: null, name: '', category: '', price: '', photo: '', active: true, peso: '', tamanho: '', acabamento: '', cor: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
+  const empty = { id: null, name: '', category: '', price: '', unidade: 'm2', photo: '', active: true, peso: '', tamanho: '', acabamento: '', cor: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const [photoError, setPhotoError] = useState('');
@@ -2154,7 +2180,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
     setSaving(false);
     setForm(empty); setEditingId(null);
   };
-  const edit = (p) => { setForm({ ...empty, ...p, price: String(p.price) }); setEditingId(p.id); };
+  const edit = (p) => { setForm({ ...empty, ...p, unidade: productUnit(p), price: String(p.price) }); setEditingId(p.id); };
   const remove = (id) => deleteProductById(id);
 
   return (
@@ -2170,6 +2196,11 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
         </label>
         <label>Preço (R$)
           <input type="number" step="0.01" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="0,00" />
+        </label>
+        <label>Unidade de medida (preço e quantidade)
+          <select value={form.unidade || 'm2'} onChange={e => setForm({ ...form, unidade: e.target.value })}>
+            {UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
         </label>
         <label>Tamanho
           <input value={form.tamanho} onChange={e => setForm({ ...form, tamanho: e.target.value })} placeholder="Ex: 60x60cm" />
@@ -2215,7 +2246,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
             <div className="admin-list-photo">{p.photo ? <img src={p.photo} alt="" /> : <Package size={16} />}</div>
             <div className="admin-list-info">
               <div>{p.name}</div>
-              <div className="muted">{p.category} · {currency(p.price)}</div>
+              <div className="muted">{p.category} · {currency(p.price)} / {unitShort(productUnit(p))}</div>
               {productSpecsLine(p) && <div className="muted">{productSpecsLine(p)}</div>}
             </div>
             <button className="icon-btn" onClick={() => edit(p)}>✎</button>
@@ -3001,7 +3032,7 @@ function ProductsReport({ products, pdfLibReady, branding }) {
       { label: 'Tamanho', width: 22, maxChars: 12 },
       { label: 'Acab. / Cor', width: 30, maxChars: 18 },
       { label: 'Situação', width: 16 },
-      { label: 'Preço', width: 24, align: 'right' },
+      { label: 'Preço', width: 32, align: 'right' },
     ];
     let yy = y;
     groups.forEach((g, gi) => {
@@ -3012,7 +3043,7 @@ function ProductsReport({ products, pdfLibReady, branding }) {
         doc.setFont(undefined, 'normal'); doc.setTextColor(0, 0, 0);
         yy += 8;
       }
-      const rows = g.items.map(p => [p.name, p.category, p.tamanho || '', acabCor(p), p.active === false ? 'Inativo' : 'Ativo', currency(p.price)]);
+      const rows = g.items.map(p => [p.name, p.category, p.tamanho || '', acabCor(p), p.active === false ? 'Inativo' : 'Ativo', `${currency(p.price)} / ${unitShort(productUnit(p))}`]);
       yy = drawPdfTable(doc, 14, yy, cols, rows, null, 7.5) + 6;
     });
     if (yy > 270) { doc.addPage(); yy = 20; }
@@ -3024,8 +3055,8 @@ function ProductsReport({ products, pdfLibReady, branding }) {
   };
 
   const exportCsv = () => {
-    const headers = ['Produto', 'Categoria', 'Tamanho', 'Acabamento', 'Cor', 'Peso(kg)', 'QtdEmbalagem', 'QtdCaixa', 'Preco', 'Situacao', 'Foto'];
-    const rows = filtered.map(p => [p.name, p.category, p.tamanho || '', p.acabamento || '', p.cor || '', p.peso || '', p.qtdEmbalagem || '', p.caixaNaoSeAplica ? 'Não se aplica' : (p.qtdCaixa || ''), Number(p.price) || 0, p.active === false ? 'Inativo' : 'Ativo', p.photo ? 'Sim' : 'Não']);
+    const headers = ['Produto', 'Categoria', 'Tamanho', 'Acabamento', 'Cor', 'Peso(kg)', 'QtdEmbalagem', 'QtdCaixa', 'Preco', 'Unidade', 'Situacao', 'Foto'];
+    const rows = filtered.map(p => [p.name, p.category, p.tamanho || '', p.acabamento || '', p.cor || '', p.peso || '', p.qtdEmbalagem || '', p.caixaNaoSeAplica ? 'Não se aplica' : (p.qtdCaixa || ''), Number(p.price) || 0, unitShort(productUnit(p)), p.active === false ? 'Inativo' : 'Ativo', p.photo ? 'Sim' : 'Não']);
     exportGenericCSV(headers, rows, 'produtos-cadastrados.csv');
   };
 
@@ -3082,7 +3113,7 @@ function ProductsReport({ products, pdfLibReady, branding }) {
                 <div className="report-card-title">{p.name} {p.active === false && <span className="muted">(inativo)</span>}</div>
                 <div className="report-card-row"><span className="label">Categoria</span><span>{p.category || '—'}</span></div>
                 {productSpecsLine(p) && <div className="report-card-row"><span className="label">Detalhes</span><span>{productSpecsLine(p)}</span></div>}
-                <div className="report-card-row"><span className="label">Preço</span><span>{currency(p.price)}</span></div>
+                <div className="report-card-row"><span className="label">Preço</span><span>{currency(p.price)} / {unitShort(productUnit(p))}</span></div>
                 {!p.photo && <div className="report-card-row"><span className="label">Foto</span><span>sem foto</span></div>}
               </div>
             ))}
