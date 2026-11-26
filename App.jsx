@@ -425,6 +425,10 @@ function ReportPdfButtons({ pdfLibReady, buildDoc, filename }) {
   );
 }
 
+const DEFAULT_CATEGORIAS = ['PEDRAS NATURAIS', 'TIJOLINHOS', 'SEIXOS', 'CUBAS', 'CIMENTICIOS', 'LINHAS DE PISCINA', 'MOSAICOS'];
+const DEFAULT_PRODUCT_OPTIONS = { acabamentos: ['Natural', 'Etrusco', 'Ox'], cores: ['Branco', 'Cinza', 'Creme'], categorias: DEFAULT_CATEGORIAS };
+// Chave "solta" pra comparar categorias parecidas (ignora acento, maiúscula e plural simples): CUBA = CUBAS = Cubas.
+const catKey = (c) => (c || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim().split(/\s+/).map(w => (w.length > 3 ? w.replace(/S$/, '') : w)).join(' ');
 const STORAGE_KEYS = { stores: 'stores', vendors: 'vendors', representantes: 'representantes', gerentes: 'gerentes', products: 'products', orders: 'orders', adminPin: 'adminPin', branding: 'branding', metas: 'metas', notifications: 'notifications', productOptions: 'productOptions' };
 
 // Guarda no aparelho quem está logado, pra não deslogar ao atualizar a página (puxar a tela pra baixo).
@@ -447,7 +451,7 @@ export default function App() {
   const [branding, setBranding] = useState({ logo: '', logoW: 0, logoH: 0, logoPdf: '', logoPdfW: 0, logoPdfH: 0, companyName: '', footerText: '', companyPhone: '', companyEmail: '' });
   const [metas, setMetas] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [productOptions, setProductOptions] = useState({ acabamentos: ['Natural', 'Etrusco', 'Ox'], cores: ['Branco', 'Cinza', 'Creme'] });
+  const [productOptions, setProductOptions] = useState(DEFAULT_PRODUCT_OPTIONS);
 
   const [screen, setScreen] = useState('login');
   const [loginTab, setLoginTab] = useState('vendor');
@@ -549,9 +553,9 @@ export default function App() {
       loadKey(STORAGE_KEYS.stores, []), loadKey(STORAGE_KEYS.vendors, []), loadKey(STORAGE_KEYS.representantes, []), loadKey(STORAGE_KEYS.gerentes, []),
       loadProducts(), loadKey(STORAGE_KEYS.orders, []), loadKey(STORAGE_KEYS.adminPin, '1234'), loadBranding(),
       loadKey(STORAGE_KEYS.metas, []), loadKey(STORAGE_KEYS.notifications, []),
-      loadKey(STORAGE_KEYS.productOptions, { acabamentos: ['Natural', 'Etrusco', 'Ox'], cores: ['Branco', 'Cinza', 'Creme'] }),
+      loadKey(STORAGE_KEYS.productOptions, DEFAULT_PRODUCT_OPTIONS),
     ]);
-    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br); setMetas(met); setNotifications(notif); setProductOptions(popts);
+    setStores(s); setVendors(v); setRepresentantes(rep); setGerentes(ger); setProducts(p); setOrders(o); setAdminPin(pin); setBranding(br); setMetas(met); setNotifications(notif); setProductOptions({ ...DEFAULT_PRODUCT_OPTIONS, ...popts });
     setRefreshing(false);
     return { s, v, rep, ger, p, o, pin, br, met, notif, popts };
   };
@@ -631,6 +635,51 @@ export default function App() {
     setProductOptions(next);
     await storage.set(STORAGE_KEYS.productOptions, JSON.stringify(next)).catch(() => {});
   };
+  const persistProductOptions = async (next) => {
+    setProductOptions(next);
+    await storage.set(STORAGE_KEYS.productOptions, JSON.stringify(next)).catch(() => {});
+  };
+  // Renomeia uma categoria e atualiza todos os produtos que a usam (se o novo nome já existir, junta as duas).
+  const renameCategory = async (oldName, newName) => {
+    const clean = (newName || '').trim();
+    if (!clean) return;
+    const oldKey = oldName.trim().toUpperCase();
+    const seen = new Set(); const list = [];
+    productOptions.categorias.forEach(c => {
+      const name = c.trim().toUpperCase() === oldKey ? clean : c;
+      if (!seen.has(name.toUpperCase())) { seen.add(name.toUpperCase()); list.push(name); }
+    });
+    await persistProductOptions({ ...productOptions, categorias: list });
+    for (const p of products.filter(p => (p.category || '').trim().toUpperCase() === oldKey)) {
+      await saveProduct({ ...p, category: clean });
+    }
+  };
+  // Só apaga categoria sem produtos. Devolve quantos produtos ainda usam (0 = apagou).
+  const deleteCategory = async (name) => {
+    const key = name.trim().toUpperCase();
+    const used = products.filter(p => (p.category || '').trim().toUpperCase() === key).length;
+    if (used > 0) return used;
+    await persistProductOptions({ ...productOptions, categorias: productOptions.categorias.filter(c => c.trim().toUpperCase() !== key) });
+    return 0;
+  };
+  // Uma única vez: deixa a lista com as categorias padrão + as que já existiam nos produtos, e ajusta
+  // para o nome padrão os produtos com nome parecido (ex.: CUBA -> CUBAS).
+  const migrateCategorias = async () => {
+    if (productOptions.categoriasMigradas) return;
+    const canon = [...DEFAULT_CATEGORIAS];
+    const extras = [];
+    const changes = [];
+    products.forEach(p => {
+      const c = (p.category || '').trim();
+      if (!c) return;
+      const hit = canon.find(x => catKey(x) === catKey(c));
+      if (hit) { if (hit !== c) changes.push({ ...p, category: hit }); }
+      else if (!extras.some(x => catKey(x) === catKey(c))) extras.push(c);
+    });
+    await persistProductOptions({ ...productOptions, categorias: [...canon, ...extras], categoriasMigradas: true });
+    for (const p of changes) await saveProduct(p);
+  };
+  const categoryApi = { renameCategory, deleteCategory, migrateCategorias };
   const mutateNotifications = (updater) => mutate(STORAGE_KEYS.notifications, updater, setNotifications);
 
   const updateMyVendorPin = async (pin) => {
@@ -1027,7 +1076,7 @@ export default function App() {
         <ChangePinScreen title="PIN de acesso do gerente" currentPin={currentGerente.pin} onSave={updateMyGerentePin} setScreen={setScreen} backScreen="gerenteDashboard" />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, productOptions, addProductOption, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -2019,7 +2068,7 @@ function GerenteVendorDetailScreen({ currentGerente, vendorId, initialPeriod, in
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, productOptions, addProductOption, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
+function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
   const cadastroTabs = ['produtos', 'lojas', 'vendedores', 'representantes', 'gerentes', 'metas', 'config'];
   const isCadastroTab = cadastroTabs.includes(adminTab);
   const allStoreIds = stores.map(s => s.id);
@@ -2060,7 +2109,7 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         </div>
       )}
       <div className="admin-body">
-        {adminTab === 'produtos' && <ProductsAdmin products={products} saveProduct={saveProduct} deleteProductById={deleteProductById} productOptions={productOptions} addProductOption={addProductOption} />}
+        {adminTab === 'produtos' && <ProductsAdmin products={products} saveProduct={saveProduct} deleteProductById={deleteProductById} productOptions={productOptions} addProductOption={addProductOption} categoryApi={categoryApi} />}
         {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
@@ -2185,7 +2234,43 @@ function InfoDocsAdmin() {
   );
 }
 
-function CategoryPicker({ value, onChange, options }) {
+function CategoryManager({ products, productOptions, categoryApi }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const list = [...(productOptions.categorias || [])].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  const count = (c) => products.filter(p => (p.category || '').trim().toUpperCase() === c.trim().toUpperCase()).length;
+  const rename = async (c) => {
+    const novo = window.prompt(`Novo nome para "${c}":\n(Todos os produtos dessa categoria serão atualizados.)`, c);
+    if (!novo || !novo.trim() || novo.trim() === c) return;
+    setBusy(true); await categoryApi.renameCategory(c, novo); setBusy(false);
+  };
+  const remove = async (c) => {
+    if (!window.confirm(`Apagar a categoria "${c}"?`)) return;
+    setBusy(true); const used = await categoryApi.deleteCategory(c); setBusy(false);
+    if (used > 0) window.alert(`Não dá para apagar: ainda há ${used} produto(s) em "${c}". Renomeie a categoria (para juntar com outra) ou mude os produtos antes.`);
+  };
+  return (
+    <div style={{ margin: '4px 0' }}>
+      <button type="button" onClick={() => setOpen(o => !o)} style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit', fontSize: 13 }}>
+        {open ? 'Fechar categorias' : 'Editar / apagar categorias'}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          {list.map(c => (
+            <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid var(--line)' }}>
+              <span style={{ flex: 1, fontSize: 13 }}>{c} <span className="muted">({count(c)})</span></span>
+              <button type="button" className="icon-btn" disabled={busy} onClick={() => rename(c)} title="Renomear">✎</button>
+              <button type="button" className="icon-btn" disabled={busy} onClick={() => remove(c)} title="Apagar"><Trash2 size={14} /></button>
+            </div>
+          ))}
+          <p className="hint">Para criar uma categoria nova, use "➕ Nova categoria…" na lista acima.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CategoryPicker({ value, onChange, options, onAddCategory }) {
   const [adding, setAdding] = useState(false);
   const [newValue, setNewValue] = useState('');
   const ADD_FLAG = '__add_new__';
@@ -2196,7 +2281,7 @@ function CategoryPicker({ value, onChange, options }) {
   const selected = list.find(o => o.toUpperCase() === cur.toUpperCase()) || '';
   const confirmAdd = () => {
     const clean = newValue.trim();
-    if (clean) onChange(clean);
+    if (clean) { onChange(clean); if (onAddCategory) onAddCategory(clean); }
     setNewValue(''); setAdding(false);
   };
   return (
@@ -2219,7 +2304,7 @@ function CategoryPicker({ value, onChange, options }) {
   );
 }
 
-function ProductsAdmin({ products, saveProduct, deleteProductById, productOptions, addProductOption }) {
+function ProductsAdmin({ products, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi }) {
   const empty = { id: null, name: '', category: '', price: '', unidade: 'm2', photo: '', active: true, peso: '', tamanho: '', acabamento: '', cor: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
@@ -2227,11 +2312,10 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
   const [listSearch, setListSearch] = useState('');
-  const existingCategories = (() => {
-    const m = new Map();
-    products.forEach(p => { const c = (p.category || '').trim(); if (c && !m.has(c.toUpperCase())) m.set(c.toUpperCase(), c); });
-    return m.size ? [...m.values()] : [...CATEGORIES_DEFAULT];
-  })();
+  const migrating = useRef(false);
+  useEffect(() => {
+    if (!productOptions.categoriasMigradas && !migrating.current) { migrating.current = true; categoryApi.migrateCategorias(); }
+  }, []);
   const visibleProducts = products.filter(p => {
     const q = listSearch.trim().toLowerCase();
     if (!q) return true;
@@ -2269,7 +2353,8 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
         <label>Nome
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Porcelanato Carrara 60x60" />
         </label>
-        <CategoryPicker value={form.category} onChange={v => setForm({ ...form, category: v })} options={existingCategories} />
+        <CategoryPicker value={form.category} onChange={v => setForm({ ...form, category: v })} options={productOptions.categorias || []} onAddCategory={v => addProductOption('categorias', v)} />
+        <CategoryManager products={products} productOptions={productOptions} categoryApi={categoryApi} />
         <label>Preço (R$)
           <input type="number" step="0.01" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="0,00" />
         </label>
