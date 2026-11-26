@@ -1205,16 +1205,21 @@ function isCimenticio(category) {
 
 function CatalogScreen({ currentVendor, stores, products, activeCategory, setActiveCategory, search, setSearch, onAddClick, cartCount, cartTotal, setScreen, logout, refreshAll, refreshing }) {
   const store = stores.find(s => s.id === currentVendor.storeId);
+  const ptSort = (a, b) => (a || '').localeCompare(b || '', 'pt-BR', { sensitivity: 'base' });
   const catMap = new Map();
-  products.forEach(p => {
+  products.filter(p => p.active !== false).forEach(p => {
     const norm = (p.category || '').trim();
     if (norm && !catMap.has(norm.toUpperCase())) catMap.set(norm.toUpperCase(), norm);
   });
-  const categories = ['Todos', ...catMap.values()];
+  // Atalhos (categorias) em ordem alfabética; os produtos seguem a mesma ordem dos atalhos e, dentro de cada categoria, ordem alfabética pelo nome.
+  const sortedCats = [...catMap.values()].sort(ptSort);
+  const categories = ['Todos', ...sortedCats];
+  const catRank = (c) => { const i = sortedCats.findIndex(x => x.toUpperCase() === (c || '').trim().toUpperCase()); return i === -1 ? 9999 : i; };
   const sameCategory = (a, b) => (a || '').trim().toUpperCase() === (b || '').trim().toUpperCase();
   const filtered = products.filter(p => p.active !== false)
     .filter(p => activeCategory === 'Todos' || sameCategory(p.category, activeCategory))
-    .filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+    .filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (catRank(a.category) - catRank(b.category)) || ptSort(a.name, b.name));
   const [menuOpen, setMenuOpen] = useState(false);
   const [docsOpen, setDocsOpen] = useState(false);
   const [infoDocs, setInfoDocs] = useState(null); // null = carregando ou erro
@@ -2180,6 +2185,40 @@ function InfoDocsAdmin() {
   );
 }
 
+function CategoryPicker({ value, onChange, options }) {
+  const [adding, setAdding] = useState(false);
+  const [newValue, setNewValue] = useState('');
+  const ADD_FLAG = '__add_new__';
+  const list = [...options];
+  const cur = (value || '').trim();
+  if (cur && !list.some(o => o.toUpperCase() === cur.toUpperCase())) list.push(cur);
+  list.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  const selected = list.find(o => o.toUpperCase() === cur.toUpperCase()) || '';
+  const confirmAdd = () => {
+    const clean = newValue.trim();
+    if (clean) onChange(clean);
+    setNewValue(''); setAdding(false);
+  };
+  return (
+    <label>Categoria
+      {!adding ? (
+        <select value={selected} onChange={e => { if (e.target.value === ADD_FLAG) setAdding(true); else onChange(e.target.value); }}>
+          <option value="">Selecione a categoria</option>
+          {list.map(o => <option key={o} value={o}>{o}</option>)}
+          <option value={ADD_FLAG}>➕ Nova categoria…</option>
+        </select>
+      ) : (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input autoFocus value={newValue} onChange={e => setNewValue(e.target.value)} placeholder="Nome da nova categoria"
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirmAdd(); } }} />
+          <button type="button" className="btn-secondary small" onClick={confirmAdd}>Adicionar</button>
+          <button type="button" className="btn-secondary small" onClick={() => { setAdding(false); setNewValue(''); }}>Cancelar</button>
+        </div>
+      )}
+    </label>
+  );
+}
+
 function ProductsAdmin({ products, saveProduct, deleteProductById, productOptions, addProductOption }) {
   const empty = { id: null, name: '', category: '', price: '', unidade: 'm2', photo: '', active: true, peso: '', tamanho: '', acabamento: '', cor: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
   const [form, setForm] = useState(empty);
@@ -2188,6 +2227,11 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
   const [listSearch, setListSearch] = useState('');
+  const existingCategories = (() => {
+    const m = new Map();
+    products.forEach(p => { const c = (p.category || '').trim(); if (c && !m.has(c.toUpperCase())) m.set(c.toUpperCase(), c); });
+    return m.size ? [...m.values()] : [...CATEGORIES_DEFAULT];
+  })();
   const visibleProducts = products.filter(p => {
     const q = listSearch.trim().toLowerCase();
     if (!q) return true;
@@ -2225,10 +2269,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
         <label>Nome
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Porcelanato Carrara 60x60" />
         </label>
-        <label>Categoria
-          <input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} placeholder="Ex: Porcelanato" list="cats" />
-          <datalist id="cats">{CATEGORIES_DEFAULT.map(c => <option key={c} value={c} />)}</datalist>
-        </label>
+        <CategoryPicker value={form.category} onChange={v => setForm({ ...form, category: v })} options={existingCategories} />
         <label>Preço (R$)
           <input type="number" step="0.01" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="0,00" />
         </label>
