@@ -338,6 +338,7 @@ function notifyPhoneForOrder(order, stores, representantes, gerentes) {
     const rep = representantes.find(r => r.id === store.representanteId);
     if (rep?.telefone) return rep.telefone;
   }
+  if (store?.whatsappPedidos && String(store.whatsappPedidos).trim()) return store.whatsappPedidos;
   const ger = gerentes.find(g => g.storeId === order.storeId);
   if (ger?.telefone) return ger.telefone;
   return null;
@@ -2261,7 +2262,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
 }
 
 function StoresAdmin({ stores, updateStores, vendors, representantes }) {
-  const empty = { id: null, name: '', endereco: '', commissionPercent: '', representanteId: '', representanteCommissionPercent: '', modalidade: 'representacao', descontoRevenda: '' };
+  const empty = { id: null, name: '', endereco: '', commissionPercent: '', representanteId: '', representanteCommissionPercent: '', modalidade: 'representacao', descontoRevenda: '', whatsappPedidos: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const save = () => {
@@ -2302,6 +2303,12 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
             {representantes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
         </label>
+        {!form.representanteId && (
+          <label>WhatsApp que recebe o aviso de pedido fechado (opcional)
+            <input value={form.whatsappPedidos || ''} onChange={e => setForm({ ...form, whatsappPedidos: e.target.value })} placeholder="(00) 00000-0000" inputMode="tel" />
+            <span className="hint">Como esta loja não tem representante, o aviso do pedido vai para este número.</span>
+          </label>
+        )}
         {form.representanteId && (
           <label>Comissão do representante sobre esta loja (%)
             <input type="number" step="0.1" value={form.representanteCommissionPercent} onChange={e => setForm({ ...form, representanteCommissionPercent: e.target.value })} placeholder="Ex: 4" />
@@ -2323,6 +2330,7 @@ function StoresAdmin({ stores, updateStores, vendors, representantes }) {
                 <div>{s.name} <span className="status-badge status-orcamento" style={{ marginLeft: 6 }}>{s.modalidade === 'revenda' ? 'Revenda' : 'Representação'}</span></div>
                 <div className="muted">Comissão: {s.commissionPercent}% · {vCount} vendedor(es){rep ? ` · Representante: ${rep.name} (${s.representanteCommissionPercent || 0}%)` : ''}{s.modalidade === 'revenda' ? ` · Desconto revenda: ${s.descontoRevenda || 0}%` : ''}</div>
                 {s.endereco && <div className="muted">{s.endereco}</div>}
+                {!rep && s.whatsappPedidos && <div className="muted">Aviso de pedido: {s.whatsappPedidos}</div>}
               </div>
               <button className="icon-btn" onClick={() => edit(s)}>✎</button>
               <button className="icon-btn" onClick={() => remove(s.id)}><Trash2 size={16} /></button>
