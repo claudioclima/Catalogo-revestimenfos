@@ -613,10 +613,16 @@ export default function App() {
 
   const mutate = async (key, updater, setter) => {
     let current;
-    try {
-      const r = await storage.get(key);
-      current = r ? JSON.parse(r.value) : [];
-    } catch { current = []; }
+    let readOk = false;
+    for (let attempt = 0; attempt < 2 && !readOk; attempt++) {
+      try {
+        const r = await storage.get(key);
+        current = r ? JSON.parse(r.value) : [];
+        readOk = true;
+      } catch (e) { console.error(e); }
+    }
+    // Se não conseguiu ler, NÃO grava (evita apagar os dados existentes por engano).
+    if (!readOk) throw new Error('Não foi possível ler os dados agora. Tente novamente.');
     const next = updater(current);
     setter(next);
     try { await storage.set(key, JSON.stringify(next)); } catch (e) { console.error(e); }
@@ -749,12 +755,32 @@ export default function App() {
     return results.every(r => r.status === 'fulfilled');
   };
 
+  // Cadastro feito pelo próprio vendedor: entra como "pendente" até o admin aprovar e definir a comissão.
+  const doVendorSignup = async ({ name, storeId, pin }) => {
+    const nm = (name || '').trim();
+    if (!nm || !storeId || !/^\d{4,6}$/.test(pin || '')) return { ok: false, error: 'Preencha o nome, escolha a loja e crie um PIN de 4 a 6 números.' };
+    let current;
+    try {
+      const r = await storage.get(STORAGE_KEYS.vendors);
+      current = r ? JSON.parse(r.value) : [];
+    } catch (e) { console.error(e); return { ok: false, error: 'Não foi possível enviar agora. Tente novamente em instantes.' }; }
+    if (current.some(v => v.storeId === storeId && (v.name || '').trim().toLowerCase() === nm.toLowerCase())) {
+      return { ok: false, error: 'Já existe um vendedor com esse nome nessa loja. Se é você, volte e entre; se o cadastro ainda não foi aprovado, aguarde a TSX.' };
+    }
+    const novo = { id: uid(), name: nm, storeId, commissionPercent: 0, pin, status: 'pendente', createdAt: new Date().toISOString() };
+    const next = [...current, novo];
+    try { await storage.set(STORAGE_KEYS.vendors, JSON.stringify(next)); } catch (e) { console.error(e); return { ok: false, error: 'Não foi possível enviar agora. Tente novamente em instantes.' }; }
+    setVendors(next);
+    return { ok: true };
+  };
+
   const storeVendors = useMemo(() => vendors.filter(v => v.storeId === loginStoreId), [vendors, loginStoreId]);
 
   const doVendorLogin = async () => {
     const { v } = await refreshAll();
     const vendor = v.find(x => x.id === loginVendorId);
     if (!vendor) { setLoginError('Selecione um vendedor.'); return; }
+    if (vendor.status === 'pendente') { setLoginError('Seu cadastro ainda está aguardando a aprovação da TSX. Assim que for aprovado, é só entrar.'); return; }
     if ((vendor.pin || '') !== loginPin) { setLoginError('PIN incorreto.'); return; }
     setCurrentVendor(vendor); setCart([]); setLoginError(''); saveSession('vendor', vendor.id); setScreen('catalog');
   };
@@ -1023,7 +1049,7 @@ export default function App() {
     <div className="app-root">
       <style>{STYLES}</style>
       {screen === 'login' && (
-        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }} />
+        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, doVendorSignup, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }} />
       )}
       {screen === 'catalog' && currentVendor && (
         <>
@@ -1181,8 +1207,19 @@ function InstallBanner() {
   );
 }
 
-function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }) {
-  const switchTab = (tab) => { setLoginTab(tab); setLoginError(''); };
+function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, doVendorSignup, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }) {
+  const switchTab = (tab) => { setLoginTab(tab); setLoginError(''); setSignupMode(false); setSignupDone(false); };
+  const [signupMode, setSignupMode] = useState(false);
+  const [signupDone, setSignupDone] = useState(false);
+  const [signup, setSignup] = useState({ name: '', storeId: '', pin: '' });
+  const [signupBusy, setSignupBusy] = useState(false);
+  const [signupError, setSignupError] = useState('');
+  const sendSignup = async () => {
+    setSignupBusy(true); setSignupError('');
+    const r = await doVendorSignup(signup);
+    setSignupBusy(false);
+    if (r.ok) { setSignupDone(true); setSignup({ name: '', storeId: '', pin: '' }); } else setSignupError(r.error);
+  };
   return (
     <div className="screen-center">
       <div className="login-card">
@@ -1198,7 +1235,7 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
           <button className={loginTab === 'ger' ? 'tab active' : 'tab'} onClick={() => switchTab('ger')}><Briefcase size={20} /><span>Gerente</span></button>
           <button className={loginTab === 'admin' ? 'tab active' : 'tab'} onClick={() => switchTab('admin')}><ShieldCheck size={20} /><span>Admin</span></button>
         </div>
-        {loginTab === 'vendor' && (
+        {loginTab === 'vendor' && !signupMode && (
           <div className="form-stack">
             <label>Loja
               <select value={loginStoreId} onChange={e => { setLoginStoreId(e.target.value); setLoginVendorId(''); }}>
@@ -1209,7 +1246,7 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
             <label>Vendedor
               <select value={loginVendorId} onChange={e => setLoginVendorId(e.target.value)} disabled={!loginStoreId}>
                 <option value="">Selecione o vendedor</option>
-                {storeVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                {storeVendors.map(v => <option key={v.id} value={v.id}>{v.name}{v.status === 'pendente' ? ' (aguardando aprovação)' : ''}</option>)}
               </select>
             </label>
             <label>PIN
@@ -1217,7 +1254,37 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
             </label>
             {loginError && <div className="error">{loginError}</div>}
             <button className="btn-primary" onClick={doVendorLogin}>Entrar</button>
+            <button type="button" className="btn-secondary" onClick={() => { setSignupMode(true); setSignupDone(false); setSignupError(''); setLoginError(''); }}>Primeiro acesso? Cadastre-se</button>
             {stores.length === 0 && <p className="hint">Nenhuma loja cadastrada ainda. Peça ao administrador para configurar o catálogo.</p>}
+          </div>
+        )}
+        {loginTab === 'vendor' && signupMode && (
+          <div className="form-stack">
+            {signupDone ? (
+              <>
+                <p className="hint"><strong>Cadastro enviado!</strong> A TSX vai conferir e aprovar o seu acesso. Depois da aprovação, é só voltar, escolher a sua loja, o seu nome e entrar com o PIN que você criou.</p>
+                <button className="btn-primary" onClick={() => { setSignupMode(false); setSignupDone(false); }}>Voltar para o login</button>
+              </>
+            ) : (
+              <>
+                <label>Loja
+                  <select value={signup.storeId} onChange={e => setSignup({ ...signup, storeId: e.target.value })}>
+                    <option value="">Selecione a loja</option>
+                    {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </label>
+                <label>Seu nome
+                  <input value={signup.name} onChange={e => setSignup({ ...signup, name: e.target.value })} placeholder="Ex: Maria Souza" />
+                </label>
+                <label>Crie um PIN (4 a 6 números)
+                  <input type="password" inputMode="numeric" maxLength={6} value={signup.pin} onChange={e => setSignup({ ...signup, pin: e.target.value.replace(/\D/g, '') })} placeholder="••••" />
+                </label>
+                {signupError && <div className="error">{signupError}</div>}
+                <button className="btn-primary" disabled={signupBusy} onClick={sendSignup}>{signupBusy ? 'Enviando…' : 'Enviar cadastro'}</button>
+                <button type="button" className="btn-secondary" onClick={() => { setSignupMode(false); setSignupError(''); }}>Já tenho cadastro, voltar</button>
+                <p className="hint">Seu acesso é liberado depois que a TSX aprovar o cadastro.</p>
+              </>
+            )}
           </div>
         )}
         {loginTab === 'rep' && (
@@ -2001,7 +2068,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
   const faturamentoMesAtual = orders.filter(o => o.status === 'pedido' && o.storeId === currentGerente.storeId && o.createdAt.slice(0, 7) === mesAtual).reduce((s, o) => s + (Number(o.total) || 0), 0);
   const metaLoja = getMeta(metas, currentGerente.storeId, null, mesAtual);
 
-  const storeVendors = vendors.filter(v => v.storeId === currentGerente.storeId);
+  const storeVendors = vendors.filter(v => v.storeId === currentGerente.storeId && v.status !== 'pendente');
   const porVendedor = storeVendors.map(v => {
     const ped = pedidos.filter(o => o.vendorId === v.id);
     const pedValue = ped.reduce((s, o) => s + (Number(o.total) || 0), 0);
@@ -2190,7 +2257,7 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         <div className="tabs wrap">
           <button className={adminTab === 'produtos' ? 'tab active' : 'tab'} onClick={() => setAdminTab('produtos')}><Package size={14} /> Produtos</button>
           <button className={adminTab === 'lojas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('lojas')}><Store size={14} /> Lojas</button>
-          <button className={adminTab === 'vendedores' ? 'tab active' : 'tab'} onClick={() => setAdminTab('vendedores')}><Users size={14} /> Vendedores</button>
+          <button className={adminTab === 'vendedores' ? 'tab active' : 'tab'} onClick={() => setAdminTab('vendedores')}><Users size={14} /> Vendedores{vendors.filter(v => v.status === 'pendente').length > 0 ? ` (${vendors.filter(v => v.status === 'pendente').length} novo)` : ''}</button>
           <button className={adminTab === 'representantes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('representantes')}><UserCog size={14} /> Representantes</button>
           <button className={adminTab === 'gerentes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('gerentes')}><UserCog size={14} /> Gerentes</button>
           <button className={adminTab === 'metas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('metas')}><TrendingUp size={14} /> Metas</button>
@@ -2658,8 +2725,36 @@ function VendorsAdmin({ vendors, stores, updateVendors }) {
   };
   const edit = (v) => { setForm({ ...v, commissionPercent: String(v.commissionPercent) }); setEditingId(v.id); };
   const remove = (id) => updateVendors(current => current.filter(v => v.id !== id));
+  const pendentes = vendors.filter(v => v.status === 'pendente');
+  const [aprovComm, setAprovComm] = useState({});
+  const aprovar = async (v) => {
+    const pct = Number(String(aprovComm[v.id] ?? '').replace(',', '.'));
+    if (aprovComm[v.id] === undefined || aprovComm[v.id] === '' || isNaN(pct)) { window.alert('Digite a comissão (%) deste vendedor antes de aprovar.'); return; }
+    try { await updateVendors(current => current.map(x => x.id === v.id ? { ...x, status: 'ativo', commissionPercent: pct } : x)); }
+    catch (e) { window.alert('Não foi possível aprovar agora. Tente novamente.'); }
+  };
+  const recusar = async (v) => {
+    if (!window.confirm(`Recusar e apagar o cadastro de ${v.name}?`)) return;
+    try { await updateVendors(current => current.filter(x => x.id !== v.id)); } catch (e) { window.alert('Não foi possível apagar agora. Tente novamente.'); }
+  };
   return (
     <div>
+      {pendentes.length > 0 && (
+        <div className="admin-form" style={{ marginBottom: 16 }}>
+          <strong>Cadastros aguardando aprovação ({pendentes.length})</strong>
+          {pendentes.map(v => (
+            <div key={v.id} className="admin-list-item" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <div className="admin-list-info" style={{ minWidth: 160 }}>
+                <div>{v.name}</div>
+                <div className="muted">{stores.find(s => s.id === v.storeId)?.name || '—'}{v.createdAt ? ` · ${new Date(v.createdAt).toLocaleDateString('pt-BR')}` : ''}</div>
+              </div>
+              <input type="number" step="0.1" style={{ width: 120 }} placeholder="Comissão %" value={aprovComm[v.id] ?? ''} onChange={e => setAprovComm({ ...aprovComm, [v.id]: e.target.value })} />
+              <button className="btn-primary small" onClick={() => aprovar(v)}>Aprovar</button>
+              <button className="btn-secondary small" onClick={() => recusar(v)}>Recusar</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="admin-form">
         <label>Nome do vendedor
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Maria Souza" />
@@ -2682,14 +2777,14 @@ function VendorsAdmin({ vendors, stores, updateVendors }) {
         </div>
       </div>
       <div className="admin-list">
-        {vendors.map(v => (
+        {vendors.filter(v => v.status !== 'pendente').map(v => (
           <div key={v.id} className="admin-list-item">
             <div className="admin-list-info"><div>{v.name}</div><div className="muted">{stores.find(s => s.id === v.storeId)?.name || '—'} · Comissão {v.commissionPercent}% · PIN {v.pin}</div></div>
             <button className="icon-btn" onClick={() => edit(v)}>✎</button>
             <button className="icon-btn" onClick={() => remove(v.id)}><Trash2 size={16} /></button>
           </div>
         ))}
-        {vendors.length === 0 && <p className="hint">Nenhum vendedor cadastrado ainda.</p>}
+        {vendors.filter(v => v.status !== 'pendente').length === 0 && <p className="hint">Nenhum vendedor cadastrado ainda.</p>}
       </div>
     </div>
   );
@@ -2855,7 +2950,7 @@ function MetasAdmin({ metas, stores, vendors, updateMetas }) {
   const empty = { id: null, storeId: '', vendorId: '', mes: currentMonthStr(), valor: '' };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
-  const storeVendorsForForm = form.storeId ? vendors.filter(v => v.storeId === form.storeId) : [];
+  const storeVendorsForForm = form.storeId ? vendors.filter(v => v.storeId === form.storeId && v.status !== 'pendente') : [];
 
   const save = () => {
     if (!form.storeId || !form.mes || !form.valor) return;
