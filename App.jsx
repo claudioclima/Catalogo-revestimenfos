@@ -769,8 +769,15 @@ export default function App() {
     }
     const novo = { id: uid(), name: nm, storeId, commissionPercent: 0, pin, status: 'pendente', createdAt: new Date().toISOString() };
     const next = [...current, novo];
-    try { await storage.set(STORAGE_KEYS.vendors, JSON.stringify(next)); } catch (e) { console.error(e); return { ok: false, error: 'Não foi possível enviar agora. Tente novamente em instantes.' }; }
-    setVendors(next);
+    try { await storage.set(STORAGE_KEYS.vendors, JSON.stringify(next)); }
+    catch (e) { console.error(e); return { ok: false, error: 'Não foi possível gravar o cadastro. Motivo técnico: ' + ((e && (e.code || e.message)) || 'desconhecido') }; }
+    // Confere no banco se o cadastro realmente entrou antes de avisar que foi enviado.
+    try {
+      const chk = await storage.get(STORAGE_KEYS.vendors);
+      const lista = chk ? JSON.parse(chk.value) : [];
+      if (!lista.some(v => v.id === novo.id)) return { ok: false, error: 'O cadastro não foi confirmado no banco de dados. Tente novamente; se repetir, avise a TSX.' };
+      setVendors(lista);
+    } catch (e) { console.error(e); return { ok: false, error: 'Não foi possível confirmar o cadastro. Motivo técnico: ' + ((e && (e.code || e.message)) || 'desconhecido') }; }
     return { ok: true };
   };
 
