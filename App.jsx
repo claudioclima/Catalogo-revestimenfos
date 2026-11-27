@@ -914,6 +914,10 @@ export default function App() {
   const deleteOrder = async (orderId) => {
     await mutateOrders(current => current.filter(o => o.id !== orderId));
   };
+  const deleteOrders = async (orderIds) => {
+    const ids = new Set(orderIds);
+    await mutateOrders(current => current.filter(o => !ids.has(o.id)));
+  };
 
   const generatePDF = (order) => {
     if (!window.jspdf) return;
@@ -1076,7 +1080,7 @@ export default function App() {
         <ChangePinScreen title="PIN de acesso do gerente" currentPin={currentGerente.pin} onSave={updateMyGerentePin} setScreen={setScreen} backScreen="gerenteDashboard" />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, deleteOrders, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -1132,6 +1136,44 @@ function QuantityModal({ product, initialQty, onConfirm, onClose }) {
   );
 }
 
+function InstallBanner() {
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem('installBannerHidden') === '1'; } catch (e) { return false; } });
+  const [promptEvt, setPromptEvt] = useState(null);
+  const [installed, setInstalled] = useState(false);
+  const standalone = typeof window !== 'undefined' && ((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true);
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isIOSSafari = isIOS && /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|FBAN|FBAV|Instagram|WhatsApp/i.test(ua);
+  useEffect(() => {
+    const onPrompt = (e) => { e.preventDefault(); setPromptEvt(e); };
+    const onInstalled = () => { setInstalled(true); setPromptEvt(null); };
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => { window.removeEventListener('beforeinstallprompt', onPrompt); window.removeEventListener('appinstalled', onInstalled); };
+  }, []);
+  const hide = () => { setHidden(true); try { localStorage.setItem('installBannerHidden', '1'); } catch (e) {} };
+  if (standalone || installed || hidden) return null;
+  if (!promptEvt && !isIOS) return null;
+  const doInstall = async () => {
+    try { promptEvt.prompt(); await promptEvt.userChoice; } catch (e) { console.error(e); }
+    setPromptEvt(null);
+  };
+  return (
+    <div className="install-banner">
+      <div className="install-banner-text">
+        <strong>Instale o app no seu celular</strong>
+        {promptEvt && <span>Fica na tela inicial, como um aplicativo.</span>}
+        {!promptEvt && isIOSSafari && <span>Toque em <b>Compartilhar</b> (quadrado com seta) e depois em <b>Adicionar à Tela de Início</b>.</span>}
+        {!promptEvt && isIOS && !isIOSSafari && <span>Abra este link no <b>Safari</b> para instalar: toque em Compartilhar e depois em Adicionar à Tela de Início.</span>}
+      </div>
+      <div className="install-banner-actions">
+        {promptEvt && <button type="button" className="btn-primary small" onClick={doInstall}>Instalar</button>}
+        <button type="button" className="btn-secondary small" onClick={hide}>Agora não</button>
+      </div>
+    </div>
+  );
+}
+
 function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }) {
   const switchTab = (tab) => { setLoginTab(tab); setLoginError(''); };
   return (
@@ -1142,6 +1184,7 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
           <h1>Catálogo de Revestimentos</h1>
           <p>Acesso para consultores de vendas</p>
         </div>
+        <InstallBanner />
         <div className="tabs login-tabs">
           <button className={loginTab === 'vendor' ? 'tab active' : 'tab'} onClick={() => switchTab('vendor')}><User size={20} /><span>Vendedor</span></button>
           <button className={loginTab === 'rep' ? 'tab active' : 'tab'} onClick={() => switchTab('rep')}><Handshake size={20} /><span>Representante</span></button>
@@ -1686,6 +1729,43 @@ function MyReportScreen({ orders, setScreen, pdfLibReady, onOpenOrder, branding 
   );
 }
 
+function InfoDocsButton() {
+  const [open, setOpen] = useState(false);
+  const [docs, setDocs] = useState(null);
+  const [err, setErr] = useState(false);
+  const [downloadingId, setDownloadingId] = useState(null);
+  const toggle = async () => {
+    const opening = !open;
+    setOpen(opening);
+    if (opening) {
+      setErr(false);
+      const list = await loadInfoDocs();
+      if (list === null) setErr(true); else setDocs(list);
+    }
+  };
+  const openDoc = async (d) => {
+    if (downloadingId) return;
+    setDownloadingId(d.id);
+    await downloadInfoDoc(d);
+    setDownloadingId(null);
+  };
+  return (
+    <div className="notif-wrap">
+      <button className="icon-btn" onClick={toggle} title="Informativos e fichas técnicas"><FolderOpen size={18} /></button>
+      {open && (
+        <div className="notif-panel menu-panel">
+          {err && <p className="hint" style={{ padding: 10 }}>Não foi possível carregar agora. Tente de novo.</p>}
+          {!err && docs === null && <p className="hint" style={{ padding: 10 }}>Carregando…</p>}
+          {!err && docs && docs.length === 0 && <p className="hint" style={{ padding: 10 }}>Nenhum documento cadastrado ainda.</p>}
+          {!err && docs && docs.map(d => (
+            <button key={d.id} className="menu-item" disabled={downloadingId === d.id} onClick={() => openDoc(d)}><FileText size={15} /> {downloadingId === d.id ? 'Baixando…' : d.name}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NotificationBell({ notifications, storeIds, role, orders, onOpenOrder, markRead }) {
   const [open, setOpen] = useState(false);
   const field = role === 'rep' ? 'readRep' : role === 'ger' ? 'readGer' : 'readAdmin';
@@ -1778,6 +1858,7 @@ function RepresentanteScreen({ currentRepresentante, stores, vendors, orders, lo
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
           <NotificationBell notifications={notifications} storeIds={myStoreIds} role="rep" orders={orders} onOpenOrder={onOpenOrder} markRead={markNotificationsRead} />
+          <InfoDocsButton />
           <button className="icon-btn" onClick={() => setScreen('repConfig')} title="Configurações"><Settings size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
         </div>
@@ -1956,6 +2037,7 @@ function GerenteScreen({ currentGerente, stores, vendors, orders, logout, refres
         <div className="topbar-actions">
           <button className="icon-btn" onClick={refreshAll} title="Atualizar dados" disabled={refreshing}><RefreshCw size={18} className={refreshing ? 'spin' : ''} /></button>
           <NotificationBell notifications={notifications} storeIds={[currentGerente.storeId]} role="ger" orders={orders} onOpenOrder={onOpenOrder} markRead={markNotificationsRead} />
+          <InfoDocsButton />
           <button className="icon-btn" onClick={() => setScreen('gerConfig')} title="Configurações"><Settings size={18} /></button>
           <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
         </div>
@@ -2068,7 +2150,7 @@ function GerenteVendorDetailScreen({ currentGerente, vendorId, initialPeriod, in
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
+function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, deleteOrders, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
   const cadastroTabs = ['produtos', 'lojas', 'vendedores', 'representantes', 'gerentes', 'metas', 'config'];
   const isCadastroTab = cadastroTabs.includes(adminTab);
   const allStoreIds = stores.map(s => s.id);
@@ -2115,8 +2197,8 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
         {adminTab === 'gerentes' && <GerentesAdmin gerentes={gerentes} stores={stores} updateGerentes={updateGerentes} />}
         {adminTab === 'metas' && <MetasAdmin metas={metas} stores={stores} vendors={vendors} updateMetas={updateMetas} />}
-        {adminTab === 'pedidos' && <OrdersListAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} fixedStatus="pedido" />}
-        {adminTab === 'orcamentos' && <OrdersListAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} fixedStatus="orcamento" />}
+        {adminTab === 'pedidos' && <OrdersListAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} deleteOrders={deleteOrders} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} fixedStatus="pedido" />}
+        {adminTab === 'orcamentos' && <OrdersListAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} pdfLibReady={pdfLibReady} convertToPedido={convertToPedido} deleteOrder={deleteOrder} deleteOrders={deleteOrders} onOpenOrder={onOpenOrder} branding={branding} markCommissionPaid={markCommissionPaid} fixedStatus="orcamento" />}
         {adminTab === 'relatorios' && <RelatoriosAdmin orders={orders} stores={stores} vendors={vendors} representantes={representantes} products={products} pdfLibReady={pdfLibReady} branding={branding} />}
         {adminTab === 'config' && <ConfigAdmin adminPin={adminPin} updateAdminPin={updateAdminPin} branding={branding} updateBranding={updateBranding} />}
       </div>
@@ -2822,7 +2904,7 @@ function MetasAdmin({ metas, stores, vendors, updateMetas }) {
   );
 }
 
-function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady, convertToPedido, deleteOrder, onOpenOrder, branding, markCommissionPaid, fixedStatus }) {
+function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady, convertToPedido, deleteOrder, deleteOrders, onOpenOrder, branding, markCommissionPaid, fixedStatus }) {
   const [filterStore, setFilterStore] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterRepresentante, setFilterRepresentante] = useState('');
@@ -2830,6 +2912,9 @@ function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady,
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [drill, setDrill] = useState(null); // null | { type: 'store'|'vendor', id, label }
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const vendorOptions = filterStore ? vendors.filter(v => v.storeId === filterStore) : vendors;
   const isPedidoTab = fixedStatus === 'pedido';
@@ -2932,6 +3017,25 @@ function OrdersListAdmin({ orders, stores, vendors, representantes, pdfLibReady,
         <PeriodFilter {...{ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }} />
         <ReportPdfButtons pdfLibReady={pdfLibReady} buildDoc={buildDoc} filename={isPedidoTab ? 'relatorio-pedidos.pdf' : 'relatorio-orcamentos.pdf'} />
         <button className="btn-secondary" onClick={() => exportOrdersCSV(filtered, isPedidoTab ? 'pedidos.csv' : 'orcamentos.csv')}><FileText size={16} /> Exportar CSV (Excel)</button>
+        {filtered.length > 0 && !bulkOpen && (
+          <button className="btn-secondary" onClick={() => { setBulkOpen(true); setBulkText(''); }}><Trash2 size={16} /> Apagar todos os {isPedidoTab ? 'pedidos' : 'orçamentos'} do filtro ({filtered.length})</button>
+        )}
+        {bulkOpen && (
+          <div className="admin-form" style={{ margin: '8px 0' }}>
+            <p className="hint"><strong>Atenção:</strong> serão apagados {filtered.length} {isPedidoTab ? 'pedido(s)' : 'orçamento(s)'} — exatamente os que aparecem com os filtros atuais (loja, vendedor, representante e período). Essa ação não pode ser desfeita. Se quiser guardar uma cópia, exporte o CSV antes.</p>
+            <label>Para confirmar, digite APAGAR
+              <input value={bulkText} onChange={e => setBulkText(e.target.value)} placeholder="APAGAR" autoCapitalize="characters" />
+            </label>
+            <div className="admin-form-actions">
+              <button className="btn-primary" disabled={bulkText.trim().toUpperCase() !== 'APAGAR' || bulkBusy} onClick={async () => {
+                setBulkBusy(true);
+                await deleteOrders(filtered.map(o => o.id));
+                setBulkBusy(false); setBulkOpen(false); setBulkText('');
+              }}>{bulkBusy ? 'Apagando…' : `Apagar ${filtered.length}`}</button>
+              <button className="btn-secondary" disabled={bulkBusy} onClick={() => { setBulkOpen(false); setBulkText(''); }}>Cancelar</button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="stats-row">
@@ -3487,6 +3591,11 @@ h1, h2 { font-family: 'Fraunces', serif; margin: 0; letter-spacing: -0.01em; }
 .login-card .form-stack label { color: #B5B2A5; }
 .login-card input, .login-card select, .login-card textarea { background: #2A2A27; border-color: #46453F; color: #F5F3EE; }
 .login-card .hint { color: #8B8879; }
+.install-banner { background: #2A2A27; border: 1px solid #46453F; border-radius: 4px; padding: 10px 12px; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; color: #F5F3EE; font-size: 13px; }
+.install-banner-text { display: flex; flex-direction: column; gap: 3px; line-height: 1.35; }
+.install-banner-text span { color: #B5B2A5; }
+.install-banner-actions { display: flex; gap: 8px; }
+.login-card .install-banner .btn-secondary { background: transparent; color: #B5B2A5; border-color: #46453F; }
 .login-header { text-align: left; margin-bottom: 24px; }
 .tile-mark { display: grid; grid-template-columns: repeat(2, 14px); grid-template-rows: repeat(2, 14px); gap: 3px; margin-bottom: 16px; }
 .login-logo { max-width: 260px; max-height: 130px; width: 100%; object-fit: contain; object-position: left; margin-bottom: 20px; }
@@ -3514,6 +3623,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--clay); outl
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-secondary { background: var(--surface); color: var(--ink); border: 1px solid var(--line); padding: 12px 16px; border-radius: 3px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
 .btn-secondary.small { padding: 6px 10px; font-size: 12px; }
+.btn-primary.small { padding: 6px 12px; font-size: 12px; }
 .btn-whatsapp { background: var(--teal); color: #fff; border: none; padding: 12px 16px; border-radius: 3px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; }
 .btn-whatsapp:hover { background: var(--teal-dark); }
 .error { color: var(--clay-dark); font-size: 13px; }
