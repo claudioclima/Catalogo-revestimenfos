@@ -339,7 +339,7 @@ function notifyPhoneForOrder(order, stores, representantes, gerentes) {
     if (rep?.telefone) return rep.telefone;
   }
   if (store?.whatsappPedidos && String(store.whatsappPedidos).trim()) return store.whatsappPedidos;
-  const ger = gerentes.find(g => g.storeId === order.storeId);
+  const ger = gerentes.find(g => g.storeId === order.storeId && g.status !== 'pendente');
   if (ger?.telefone) return ger.telefone;
   return null;
 }
@@ -781,6 +781,31 @@ export default function App() {
     return { ok: true };
   };
 
+  // Cadastro feito pelo próprio gerente: fica "pendente" até o admin aprovar.
+  const doGerenteSignup = async ({ name, storeId, pin }) => {
+    const nm = (name || '').trim();
+    if (!nm || !storeId || !/^\d{4,6}$/.test(pin || '')) return { ok: false, error: 'Preencha o nome, escolha a loja e crie um PIN de 4 a 6 números.' };
+    let current;
+    try {
+      const r = await storage.get(STORAGE_KEYS.gerentes);
+      current = r ? JSON.parse(r.value) : [];
+    } catch (e) { console.error(e); return { ok: false, error: 'Não foi possível enviar agora. Tente novamente em instantes.' }; }
+    if (current.some(g => g.storeId === storeId && (g.name || '').trim().toLowerCase() === nm.toLowerCase())) {
+      return { ok: false, error: 'Já existe um gerente com esse nome nessa loja. Se é você, volte e entre; se o cadastro ainda não foi aprovado, aguarde a TSX.' };
+    }
+    const novo = { id: uid(), name: nm, storeId, pin, telefone: '', email: '', status: 'pendente', createdAt: new Date().toISOString() };
+    const next = [...current, novo];
+    try { await storage.set(STORAGE_KEYS.gerentes, JSON.stringify(next)); }
+    catch (e) { console.error(e); return { ok: false, error: 'Não foi possível gravar o cadastro. Motivo técnico: ' + ((e && (e.code || e.message)) || 'desconhecido') }; }
+    try {
+      const chk = await storage.get(STORAGE_KEYS.gerentes);
+      const lista = chk ? JSON.parse(chk.value) : [];
+      if (!lista.some(g => g.id === novo.id)) return { ok: false, error: 'O cadastro não foi confirmado no banco de dados. Tente novamente; se repetir, avise a TSX.' };
+      setGerentes(lista);
+    } catch (e) { console.error(e); return { ok: false, error: 'Não foi possível confirmar o cadastro. Motivo técnico: ' + ((e && (e.code || e.message)) || 'desconhecido') }; }
+    return { ok: true };
+  };
+
   const storeVendors = useMemo(() => vendors.filter(v => v.storeId === loginStoreId), [vendors, loginStoreId]);
 
   const doVendorLogin = async () => {
@@ -802,6 +827,7 @@ export default function App() {
     const { ger } = await refreshAll();
     const g = ger.find(x => x.id === loginGerId);
     if (!g) { setLoginError('Selecione um gerente.'); return; }
+    if (g.status === 'pendente') { setLoginError('Seu cadastro ainda está aguardando a aprovação da TSX. Assim que for aprovado, é só entrar.'); return; }
     if ((g.pin || '') !== loginGerPin) { setLoginError('PIN incorreto.'); return; }
     setCurrentGerente(g); setLoginError(''); saveSession('ger', g.id); setScreen('gerenteDashboard');
   };
@@ -1056,7 +1082,7 @@ export default function App() {
     <div className="app-root">
       <style>{STYLES}</style>
       {screen === 'login' && (
-        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, doVendorSignup, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }} />
+        <LoginScreen {...{ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, doVendorSignup, doGerenteSignup, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }} />
       )}
       {screen === 'catalog' && currentVendor && (
         <>
@@ -1214,7 +1240,7 @@ function InstallBanner() {
   );
 }
 
-function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, doVendorSignup, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }) {
+function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId, setLoginStoreId, loginVendorId, setLoginVendorId, loginPin, setLoginPin, doVendorLogin, doVendorSignup, doGerenteSignup, representantes, loginRepId, setLoginRepId, loginRepPin, setLoginRepPin, doRepresentanteLogin, gerentes, loginGerId, setLoginGerId, loginGerPin, setLoginGerPin, doGerenteLogin, adminPinInput, setAdminPinInput, doAdminLogin, loginError, setLoginError, branding }) {
   const switchTab = (tab) => { setLoginTab(tab); setLoginError(''); setSignupMode(false); setSignupDone(false); };
   const [signupMode, setSignupMode] = useState(false);
   const [signupDone, setSignupDone] = useState(false);
@@ -1223,7 +1249,7 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
   const [signupError, setSignupError] = useState('');
   const sendSignup = async () => {
     setSignupBusy(true); setSignupError('');
-    const r = await doVendorSignup(signup);
+    const r = await (loginTab === 'ger' ? doGerenteSignup : doVendorSignup)(signup);
     setSignupBusy(false);
     if (r.ok) { setSignupDone(true); setSignup({ name: '', storeId: '', pin: '' }); } else setSignupError(r.error);
   };
@@ -1265,11 +1291,11 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
             {stores.length === 0 && <p className="hint">Nenhuma loja cadastrada ainda. Peça ao administrador para configurar o catálogo.</p>}
           </div>
         )}
-        {loginTab === 'vendor' && signupMode && (
+        {(loginTab === 'vendor' || loginTab === 'ger') && signupMode && (
           <div className="form-stack">
             {signupDone ? (
               <>
-                <p className="hint"><strong>Cadastro enviado!</strong> A TSX vai conferir e aprovar o seu acesso. Depois da aprovação, é só voltar, escolher a sua loja, o seu nome e entrar com o PIN que você criou.</p>
+                <p className="hint"><strong>Cadastro enviado!</strong> A TSX vai conferir e aprovar o seu acesso. Depois da aprovação, é só voltar, {loginTab === 'ger' ? 'escolher o seu nome' : 'escolher a sua loja, o seu nome'} e entrar com o PIN que você criou.</p>
                 <button className="btn-primary" onClick={() => { setSignupMode(false); setSignupDone(false); }}>Voltar para o login</button>
               </>
             ) : (
@@ -1309,12 +1335,12 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
             <button className="btn-primary" onClick={doRepresentanteLogin}>Entrar</button>
           </div>
         )}
-        {loginTab === 'ger' && (
+        {loginTab === 'ger' && !signupMode && (
           <div className="form-stack">
             <label>Gerente
               <select value={loginGerId} onChange={e => setLoginGerId(e.target.value)}>
                 <option value="">Selecione seu nome</option>
-                {gerentes.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                {gerentes.map(g => <option key={g.id} value={g.id}>{g.name}{g.status === 'pendente' ? ' (aguardando aprovação)' : ''}</option>)}
               </select>
             </label>
             <label>PIN
@@ -1322,6 +1348,7 @@ function LoginScreen({ loginTab, setLoginTab, stores, storeVendors, loginStoreId
             </label>
             {loginError && <div className="error">{loginError}</div>}
             <button className="btn-primary" onClick={doGerenteLogin}>Entrar</button>
+            <button type="button" className="btn-secondary" onClick={() => { setSignupMode(true); setSignupDone(false); setSignupError(''); setLoginError(''); }}>Primeiro acesso? Cadastre-se</button>
           </div>
         )}
         {loginTab === 'admin' && (
@@ -1591,7 +1618,7 @@ function OrderSummaryScreen({ order, waLink, setScreen, generatePDF, pdfLibReady
   const isVendorFlow = backScreen === 'catalog' || backScreen === 'quotes' || backScreen === 'myReport';
   const store = stores?.find(s => s.id === order.storeId);
   const rep = store?.representanteId ? representantes?.find(r => r.id === store.representanteId) : null;
-  const ger = gerentes?.find(g => g.storeId === order.storeId);
+  const ger = gerentes?.find(g => g.storeId === order.storeId && g.status !== 'pendente');
   const emailOptions = [
     rep?.email ? { label: `Representante (${rep.name})`, email: rep.email } : null,
     ger?.email ? { label: `Gerente (${ger.name})`, email: ger.email } : null,
@@ -2266,7 +2293,7 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
           <button className={adminTab === 'lojas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('lojas')}><Store size={14} /> Lojas</button>
           <button className={adminTab === 'vendedores' ? 'tab active' : 'tab'} onClick={() => setAdminTab('vendedores')}><Users size={14} /> Vendedores{vendors.filter(v => v.status === 'pendente').length > 0 ? ` (${vendors.filter(v => v.status === 'pendente').length} novo)` : ''}</button>
           <button className={adminTab === 'representantes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('representantes')}><UserCog size={14} /> Representantes</button>
-          <button className={adminTab === 'gerentes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('gerentes')}><UserCog size={14} /> Gerentes</button>
+          <button className={adminTab === 'gerentes' ? 'tab active' : 'tab'} onClick={() => setAdminTab('gerentes')}><UserCog size={14} /> Gerentes{gerentes.filter(g => g.status === 'pendente').length > 0 ? ` (${gerentes.filter(g => g.status === 'pendente').length} novo)` : ''}</button>
           <button className={adminTab === 'metas' ? 'tab active' : 'tab'} onClick={() => setAdminTab('metas')}><TrendingUp size={14} /> Metas</button>
           <button className={adminTab === 'config' ? 'tab active' : 'tab'} onClick={() => setAdminTab('config')}><Settings size={14} /> Config</button>
         </div>
@@ -2893,8 +2920,32 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
   };
   const edit = (g) => { setForm({ ...empty, ...g }); setEditingId(g.id); };
   const remove = (id) => updateGerentes(current => current.filter(g => g.id !== id));
+  const pendentes = gerentes.filter(g => g.status === 'pendente');
+  const aprovar = async (g) => {
+    try { await updateGerentes(current => current.map(x => x.id === g.id ? { ...x, status: 'ativo' } : x)); }
+    catch (e) { window.alert('Não foi possível aprovar agora. Tente novamente.'); }
+  };
+  const recusar = async (g) => {
+    if (!window.confirm(`Recusar e apagar o cadastro de ${g.name}?`)) return;
+    try { await updateGerentes(current => current.filter(x => x.id !== g.id)); } catch (e) { window.alert('Não foi possível apagar agora. Tente novamente.'); }
+  };
   return (
     <div>
+      {pendentes.length > 0 && (
+        <div className="admin-form" style={{ marginBottom: 16 }}>
+          <strong>Cadastros aguardando aprovação ({pendentes.length})</strong>
+          {pendentes.map(g => (
+            <div key={g.id} className="admin-list-item" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <div className="admin-list-info" style={{ minWidth: 160 }}>
+                <div>{g.name}</div>
+                <div className="muted">{stores.find(s => s.id === g.storeId)?.name || '—'}{g.createdAt ? ` · ${new Date(g.createdAt).toLocaleDateString('pt-BR')}` : ''}</div>
+              </div>
+              <button className="btn-primary small" onClick={() => aprovar(g)}>Aprovar</button>
+              <button className="btn-secondary small" onClick={() => recusar(g)}>Recusar</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="admin-form">
         <p className="hint">O gerente acompanha o desempenho de uma loja específica: faturamento, orçamentos/pedidos e o ranking de vendedores dela. O telefone é usado para receber o aviso automático por WhatsApp quando um pedido é confirmado (caso a loja não tenha representante cadastrado). O e-mail aparece como opção no botão "Enviar por e-mail" de cada pedido dessa loja.</p>
         <label>Nome do gerente
@@ -2921,14 +2972,14 @@ function GerentesAdmin({ gerentes, stores, updateGerentes }) {
         </div>
       </div>
       <div className="admin-list">
-        {gerentes.map(g => (
+        {gerentes.filter(g => g.status !== 'pendente').map(g => (
           <div key={g.id} className="admin-list-item">
             <div className="admin-list-info"><div>{g.name}</div><div className="muted">{stores.find(s => s.id === g.storeId)?.name || '—'} · PIN {g.pin} · {g.telefone || 'sem telefone'}</div></div>
             <button className="icon-btn" onClick={() => edit(g)}>✎</button>
             <button className="icon-btn" onClick={() => remove(g.id)}><Trash2 size={16} /></button>
           </div>
         ))}
-        {gerentes.length === 0 && <p className="hint">Nenhum gerente cadastrado ainda.</p>}
+        {gerentes.filter(g => g.status !== 'pendente').length === 0 && <p className="hint">Nenhum gerente cadastrado ainda.</p>}
       </div>
     </div>
   );
