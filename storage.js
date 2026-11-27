@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { firebaseConfig } from './firebaseConfig';
 
 const app = initializeApp(firebaseConfig);
@@ -45,6 +45,12 @@ export const storage = {
     const ref = doc(db, 'appdata', key);
     await setDoc(ref, { value });
     return { key, value };
+  },
+  // Apaga de verdade o documento (usado ao excluir produtos).
+  async remove(key) {
+    await ensureAuth();
+    await deleteDoc(doc(db, 'appdata', key));
+    return { key, deleted: true };
   },
   // Varre todos os documentos da coleção cujo nome comece com `prefix` (ex: "product:").
   // Usado para recuperar registros "órfãos" caso um índice seja perdido.

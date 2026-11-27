@@ -493,7 +493,7 @@ export default function App() {
   const recoverOrphanProducts = async () => {
     try {
       const docs = await storage.listByPrefix('product:');
-      return docs.map(d => { try { return JSON.parse(d.value); } catch { return null; } }).filter(Boolean);
+      return docs.map(d => { try { return JSON.parse(d.value); } catch { return null; } }).filter(p => p && !p.deleted);
     } catch (e) { console.error(e); return []; }
   };
 
@@ -512,7 +512,7 @@ export default function App() {
       return [];
     }
     const results = await Promise.all(ids.map(id => loadKey(`product:${id}`, null)));
-    const found = results.filter(Boolean);
+    const found = results.filter(p => p && !p.deleted);
     if (ids.length === 0 || found.length < ids.length) {
       const recovered = await recoverOrphanProducts();
       if (recovered.length > found.length) {
@@ -724,6 +724,13 @@ export default function App() {
       await storage.set('productIndex', JSON.stringify(idx.filter(x => x !== id)));
     } catch (e) {
       console.error('Não foi possível atualizar o índice de produtos com segurança, tente novamente:', e);
+    }
+    // Apaga também o cadastro do produto, para a recuperação automática não trazer ele de volta.
+    try {
+      if (storage.remove) await storage.remove(`product:${id}`);
+      else await storage.set(`product:${id}`, JSON.stringify({ id, deleted: true }));
+    } catch (e) {
+      try { await storage.set(`product:${id}`, JSON.stringify({ id, deleted: true })); } catch (e2) { console.error(e2); }
     }
     setProducts(current => current.filter(p => p.id !== id));
   };
