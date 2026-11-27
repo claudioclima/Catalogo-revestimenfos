@@ -1087,7 +1087,7 @@ export default function App() {
         <ChangePinScreen title="PIN de acesso do gerente" currentPin={currentGerente.pin} onSave={updateMyGerentePin} setScreen={setScreen} backScreen="gerenteDashboard" />
       )}
       {screen === 'admin' && (
-        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, deleteOrders, markCommissionPaid, refreshAll, refreshing, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
+        <AdminScreen {...{ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores: mutateStores, updateVendors: mutateVendors, updateRepresentantes: mutateRepresentantes, updateGerentes: mutateGerentes, updateMetas: mutateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin: mutateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, deleteOrders, markCommissionPaid, refreshAll, refreshing, logout, onOpenOrder: (o) => openOrderView(o, 'admin') }} />
       )}
     </div>
   );
@@ -2157,7 +2157,7 @@ function GerenteVendorDetailScreen({ currentGerente, vendorId, initialPeriod, in
   );
 }
 
-function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, deleteOrders, markCommissionPaid, refreshAll, refreshing, onOpenOrder }) {
+function AdminScreen({ stores, vendors, representantes, gerentes, products, orders, metas, notifications, markNotificationsRead, updateStores, updateVendors, updateRepresentantes, updateGerentes, updateMetas, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, adminTab, setAdminTab, adminPin, updateAdminPin, branding, updateBranding, setScreen, pdfLibReady, convertToPedido, deleteOrder, deleteOrders, markCommissionPaid, refreshAll, refreshing, logout, onOpenOrder }) {
   const cadastroTabs = ['produtos', 'lojas', 'vendedores', 'representantes', 'gerentes', 'metas', 'config'];
   const isCadastroTab = cadastroTabs.includes(adminTab);
   const allStoreIds = stores.map(s => s.id);
@@ -2183,7 +2183,7 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
           <button className={adminTab === 'orcamentos' ? 'icon-btn active' : 'icon-btn'} onClick={() => setAdminTab('orcamentos')} title="Orçamentos"><FileText size={18} /></button>
           <button className={adminTab === 'relatorios' ? 'icon-btn active' : 'icon-btn'} onClick={() => setAdminTab('relatorios')} title="Relatórios"><BarChart3 size={18} /></button>
           <button className={isCadastroTab ? 'icon-btn active' : 'icon-btn'} onClick={() => setAdminTab('produtos')} title="Cadastros"><Settings size={18} /></button>
-          <button className="icon-btn" onClick={() => setScreen('login')}><LogOut size={18} /></button>
+          <button className="icon-btn" onClick={logout} title="Sair"><LogOut size={18} /></button>
         </div>
       </header>
       {isCadastroTab && (
