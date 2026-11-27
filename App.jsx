@@ -2312,6 +2312,10 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
   const [listSearch, setListSearch] = useState('');
+  const [selected, setSelected] = useState({});
+  const [bulkCat, setBulkCat] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState('');
   const migrating = useRef(false);
   useEffect(() => {
     if (!productOptions.categoriasMigradas && !migrating.current) { migrating.current = true; categoryApi.migrateCategorias(); }
@@ -2345,6 +2349,31 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
   };
   const edit = (p) => { setForm({ ...empty, ...p, unidade: productUnit(p), price: String(p.price) }); setEditingId(p.id); };
   const remove = (id) => deleteProductById(id);
+  const selectedIds = Object.keys(selected).filter(id => selected[id] && products.some(p => p.id === id));
+  const allVisibleSelected = visibleProducts.length > 0 && visibleProducts.every(p => selected[p.id]);
+  const toggleOne = (id) => setSelected(s => ({ ...s, [id]: !s[id] }));
+  const toggleAllVisible = () => {
+    setSelected(s => {
+      const n = { ...s };
+      const target = !allVisibleSelected;
+      visibleProducts.forEach(p => { n[p.id] = target; });
+      return n;
+    });
+  };
+  const moveSelected = async () => {
+    if (!bulkCat || selectedIds.length === 0 || bulkBusy) return;
+    if (!window.confirm(`Mover ${selectedIds.length} produto(s) para a categoria "${bulkCat}"?`)) return;
+    setBulkBusy(true); setBulkMsg('');
+    let ok = 0;
+    for (const id of selectedIds) {
+      const p = products.find(x => x.id === id);
+      if (!p) continue;
+      try { await saveProduct({ ...p, category: bulkCat }); ok++; } catch (e) { console.error(e); }
+    }
+    setBulkBusy(false);
+    setSelected({});
+    setBulkMsg(ok === selectedIds.length ? `${ok} produto(s) movido(s) para ${bulkCat}.` : `${ok} de ${selectedIds.length} movido(s). Alguns falharam — tente de novo.`);
+  };
 
   return (
     <div>
@@ -2401,9 +2430,34 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
         <input placeholder="Pesquisar produto cadastrado (nome, categoria ou tamanho)…" value={listSearch} onChange={e => setListSearch(e.target.value)} />
       </div>
       {listSearch.trim() && <p className="hint">{visibleProducts.length} de {products.length} produto(s)</p>}
+      {visibleProducts.length > 0 && (
+        <div className="admin-form" style={{ margin: '8px 0', padding: 10 }}>
+          <label className="checkbox-row">
+            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} />
+            Selecionar todos {listSearch.trim() ? 'os encontrados' : 'da lista'} ({visibleProducts.length})
+          </label>
+          {selectedIds.length > 0 && (
+            <>
+              <p className="hint">{selectedIds.length} selecionado(s)</p>
+              <label>Mover selecionados para a categoria
+                <select value={bulkCat} onChange={e => setBulkCat(e.target.value)}>
+                  <option value="">Escolha a categoria…</option>
+                  {(productOptions.categorias || []).map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+              <div className="admin-form-actions">
+                <button className="btn-primary" disabled={!bulkCat || bulkBusy} onClick={moveSelected}>{bulkBusy ? 'Movendo…' : 'Mover selecionados'}</button>
+                <button className="btn-secondary" disabled={bulkBusy} onClick={() => setSelected({})}>Limpar seleção</button>
+              </div>
+            </>
+          )}
+          {bulkMsg && <p className="hint">{bulkMsg}</p>}
+        </div>
+      )}
       <div className="admin-list">
         {visibleProducts.map(p => (
           <div key={p.id} className="admin-list-item">
+            <input type="checkbox" checked={!!selected[p.id]} onChange={() => toggleOne(p.id)} style={{ marginRight: 8, flexShrink: 0 }} />
             <div className="admin-list-photo">{p.photo ? <img src={p.photo} alt="" /> : <Package size={16} />}</div>
             <div className="admin-list-info">
               <div>{p.name}</div>
