@@ -2299,7 +2299,7 @@ function AdminScreen({ stores, vendors, representantes, gerentes, products, orde
         </div>
       )}
       <div className="admin-body">
-        {adminTab === 'produtos' && <ProductsAdmin products={products} saveProduct={saveProduct} deleteProductById={deleteProductById} productOptions={productOptions} addProductOption={addProductOption} categoryApi={categoryApi} />}
+        {adminTab === 'produtos' && <ProductsAdmin products={products} saveProduct={saveProduct} deleteProductById={deleteProductById} productOptions={productOptions} addProductOption={addProductOption} categoryApi={categoryApi} refreshAll={refreshAll} />}
         {adminTab === 'lojas' && <StoresAdmin stores={stores} updateStores={updateStores} vendors={vendors} representantes={representantes} />}
         {adminTab === 'vendedores' && <VendorsAdmin vendors={vendors} stores={stores} updateVendors={updateVendors} />}
         {adminTab === 'representantes' && <RepresentantesAdmin representantes={representantes} stores={stores} updateRepresentantes={updateRepresentantes} />}
@@ -2494,7 +2494,93 @@ function CategoryPicker({ value, onChange, options, onAddCategory }) {
   );
 }
 
-function ProductsAdmin({ products, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi }) {
+function ProductDbCheck({ onDone }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [data, setData] = useState(null);
+  const [msg, setMsg] = useState('');
+  const readIndex = async () => { const r = await storage.get('productIndex'); return r ? JSON.parse(r.value) : []; };
+  const scan = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const idx = await readIndex();
+      const docs = await storage.listByPrefix('product:');
+      const rows = docs.map(d => { let p = null; try { p = JSON.parse(d.value); } catch {} return { id: d.key.replace('product:', ''), p }; });
+      const items = rows.filter(r => r.p && !r.p.deleted).map(r => ({ id: r.id, name: r.p.name || '(sem nome)', category: r.p.category || '', tamanho: r.p.tamanho || '', inIndex: idx.includes(r.id) }));
+      const missing = idx.filter(id => !items.some(i => i.id === id));
+      items.sort((a, b) => a.name.localeCompare(b.name));
+      setData({ items, missing, idxLen: idx.length });
+    } catch (e) { console.error(e); setMsg('Não foi possível consultar o banco agora: ' + ((e && (e.code || e.message)) || 'erro')); }
+    setBusy(false);
+  };
+  const apagar = async (it) => {
+    if (!window.confirm(`Apagar DE VEZ "${it.name}" do banco? Ele some do catálogo de todos.`)) return;
+    setBusy(true);
+    try {
+      const idx = await readIndex();
+      await storage.set('productIndex', JSON.stringify(idx.filter(x => x !== it.id)));
+      try { await storage.remove(`product:${it.id}`); } catch { await storage.set(`product:${it.id}`, JSON.stringify({ id: it.id, deleted: true })); }
+      setMsg(`"${it.name}" apagado.`);
+      await scan(); if (onDone) onDone();
+    } catch (e) { console.error(e); setMsg('Não foi possível apagar agora: ' + ((e && (e.code || e.message)) || 'erro')); setBusy(false); }
+  };
+  const incluir = async (it) => {
+    setBusy(true);
+    try {
+      const idx = await readIndex();
+      if (!idx.includes(it.id)) await storage.set('productIndex', JSON.stringify([...idx, it.id]));
+      setMsg(`"${it.name}" incluído no catálogo.`);
+      await scan(); if (onDone) onDone();
+    } catch (e) { console.error(e); setMsg('Não foi possível incluir agora: ' + ((e && (e.code || e.message)) || 'erro')); setBusy(false); }
+  };
+  const limparFantasmas = async () => {
+    setBusy(true);
+    try {
+      const idx = await readIndex();
+      const gone = new Set(data.missing);
+      await storage.set('productIndex', JSON.stringify(idx.filter(id => !gone.has(id))));
+      setMsg('Lista limpa.');
+      await scan(); if (onDone) onDone();
+    } catch (e) { console.error(e); setMsg('Não foi possível limpar agora: ' + ((e && (e.code || e.message)) || 'erro')); setBusy(false); }
+  };
+  return (
+    <div className="admin-form" style={{ marginBottom: 16 }}>
+      <button className="btn-secondary" onClick={() => { const n = !open; setOpen(n); if (n && !data) scan(); }}>{open ? 'Fechar conferência do banco' : 'Conferir produtos no banco de dados'}</button>
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          <p className="hint">Mostra o que realmente está gravado no banco, que é o que os vendedores enxergam. Use para achar produtos repetidos ou "fantasmas".</p>
+          <button className="btn-secondary small" disabled={busy} onClick={scan}>{busy ? 'Consultando…' : 'Atualizar conferência'}</button>
+          {msg && <p className="hint">{msg}</p>}
+          {data && (
+            <>
+              <p className="hint"><strong>{data.items.length}</strong> produto(s) gravado(s) no banco · <strong>{data.items.filter(i => i.inIndex).length}</strong> aparecendo no catálogo · <strong>{data.items.filter(i => !i.inIndex).length}</strong> fora do catálogo</p>
+              <div className="admin-list">
+                {data.items.map(it => (
+                  <div key={it.id} className="admin-list-item" style={{ flexWrap: 'wrap', gap: 8 }}>
+                    <div className="admin-list-info" style={{ minWidth: 160 }}>
+                      <div>{it.name}</div>
+                      <div className="muted">{it.category}{it.tamanho ? ` · ${it.tamanho}` : ''} · {it.inIndex ? 'aparece no catálogo' : 'FORA do catálogo'} · código {it.id}</div>
+                    </div>
+                    {!it.inIndex && <button className="btn-secondary small" disabled={busy} onClick={() => incluir(it)}>Incluir</button>}
+                    <button className="btn-secondary small" disabled={busy} onClick={() => apagar(it)}>Apagar de vez</button>
+                  </div>
+                ))}
+              </div>
+              {data.missing.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <p className="hint">{data.missing.length} item(ns) da lista do catálogo não têm produto gravado (sobras sem efeito).</p>
+                  <button className="btn-secondary small" disabled={busy} onClick={limparFantasmas}>Limpar sobras</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProductsAdmin({ products, saveProduct, deleteProductById, productOptions, addProductOption, categoryApi, refreshAll }) {
   const empty = { id: null, name: '', category: '', price: '', unidade: 'm2', photo: '', active: true, peso: '', tamanho: '', acabamento: '', cor: '', qtdEmbalagem: '', qtdCaixa: '', caixaNaoSeAplica: false };
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
@@ -2644,6 +2730,7 @@ function ProductsAdmin({ products, saveProduct, deleteProductById, productOption
           {bulkMsg && <p className="hint">{bulkMsg}</p>}
         </div>
       )}
+      <ProductDbCheck onDone={refreshAll} />
       <div className="admin-list">
         {visibleProducts.map(p => (
           <div key={p.id} className="admin-list-item">
