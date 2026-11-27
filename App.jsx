@@ -1412,7 +1412,9 @@ function CatalogScreen({ currentVendor, stores, products, activeCategory, setAct
     if (norm && !catMap.has(norm.toUpperCase())) catMap.set(norm.toUpperCase(), norm);
   });
   // Atalhos (categorias) em ordem alfabética; os produtos seguem a mesma ordem dos atalhos e, dentro de cada categoria, ordem alfabética pelo nome.
-  const sortedCats = [...catMap.values()].sort(ptSort);
+  // "Linhas de Piscinas" (menor demanda) sempre vai por último; as demais seguem em ordem alfabética.
+  const isPiscina = (c) => /PISCINA/i.test((c || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+  const sortedCats = [...catMap.values()].sort((a, b) => (isPiscina(a) - isPiscina(b)) || ptSort(a, b));
   const categories = ['Todos', ...sortedCats];
   const catRank = (c) => { const i = sortedCats.findIndex(x => x.toUpperCase() === (c || '').trim().toUpperCase()); return i === -1 ? 9999 : i; };
   const sameCategory = (a, b) => (a || '').trim().toUpperCase() === (b || '').trim().toUpperCase();
