@@ -513,9 +513,11 @@ export default function App() {
     }
     const results = await Promise.all(ids.map(id => loadKey(`product:${id}`, null)));
     const found = results.filter(p => p && !p.deleted);
-    if (ids.length === 0 || found.length < ids.length) {
+    // A recuperação automática só roda se a lista de produtos estiver totalmente vazia (acidente grave).
+    // Se faltar algum item, NÃO varre o banco: isso trazia de volta produtos já apagados.
+    if (ids.length === 0 && found.length === 0) {
       const recovered = await recoverOrphanProducts();
-      if (recovered.length > found.length) {
+      if (recovered.length > 0) {
         await storage.set('productIndex', JSON.stringify(recovered.map(p => p.id))).catch(() => {});
         return recovered;
       }
@@ -2501,6 +2503,8 @@ function ProductDbCheck({ onDone }) {
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState(null);
   const [msg, setMsg] = useState('');
+  const [q, setQ] = useState('');
+  const [sel, setSel] = useState({});
   const readIndex = async () => { const r = await storage.get('productIndex'); return r ? JSON.parse(r.value) : []; };
   const scan = async () => {
     setBusy(true); setMsg('');
@@ -2523,6 +2527,21 @@ function ProductDbCheck({ onDone }) {
       await storage.set('productIndex', JSON.stringify(idx.filter(x => x !== it.id)));
       try { await storage.remove(`product:${it.id}`); } catch { await storage.set(`product:${it.id}`, JSON.stringify({ id: it.id, deleted: true })); }
       setMsg(`"${it.name}" apagado.`);
+      await scan(); if (onDone) onDone();
+    } catch (e) { console.error(e); setMsg('Não foi possível apagar agora: ' + ((e && (e.code || e.message)) || 'erro')); setBusy(false); }
+  };
+  const apagarSelecionados = async () => {
+    const ids = Object.keys(sel).filter(k => sel[k]);
+    if (ids.length === 0) return;
+    if (!window.confirm(`Apagar DE VEZ ${ids.length} produto(s) do banco? Eles somem do catálogo de todos.`)) return;
+    setBusy(true);
+    try {
+      const idx = await readIndex();
+      await storage.set('productIndex', JSON.stringify(idx.filter(x => !ids.includes(x))));
+      for (const id of ids) {
+        try { await storage.remove(`product:${id}`); } catch { await storage.set(`product:${id}`, JSON.stringify({ id, deleted: true })); }
+      }
+      setSel({}); setMsg(`${ids.length} produto(s) apagado(s).`);
       await scan(); if (onDone) onDone();
     } catch (e) { console.error(e); setMsg('Não foi possível apagar agora: ' + ((e && (e.code || e.message)) || 'erro')); setBusy(false); }
   };
@@ -2556,9 +2575,14 @@ function ProductDbCheck({ onDone }) {
           {data && (
             <>
               <p className="hint"><strong>{data.items.length}</strong> produto(s) gravado(s) no banco · <strong>{data.items.filter(i => i.inIndex).length}</strong> aparecendo no catálogo · <strong>{data.items.filter(i => !i.inIndex).length}</strong> fora do catálogo</p>
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Pesquisar pelo nome (ex: atermico)" style={{ marginBottom: 8 }} />
+              {Object.values(sel).some(Boolean) && (
+                <button className="btn-primary small" disabled={busy} onClick={apagarSelecionados} style={{ marginBottom: 8 }}>Apagar de vez os selecionados ({Object.values(sel).filter(Boolean).length})</button>
+              )}
               <div className="admin-list">
-                {data.items.map(it => (
+                {data.items.filter(it => !q.trim() || (it.name + ' ' + it.category).toLowerCase().includes(q.trim().toLowerCase())).map(it => (
                   <div key={it.id} className="admin-list-item" style={{ flexWrap: 'wrap', gap: 8 }}>
+                    <input type="checkbox" checked={!!sel[it.id]} onChange={() => setSel({ ...sel, [it.id]: !sel[it.id] })} style={{ flexShrink: 0 }} />
                     <div className="admin-list-info" style={{ minWidth: 160 }}>
                       <div>{it.name}</div>
                       <div className="muted">{it.category}{it.tamanho ? ` · ${it.tamanho}` : ''} · {it.inIndex ? 'aparece no catálogo' : 'FORA do catálogo'} · código {it.id}</div>
